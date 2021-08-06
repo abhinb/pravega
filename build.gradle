@@ -414,6 +414,62 @@ project('test:testcommon') {
     }
 }
 
+project('logstore:shared') {
+    dependencies {
+        compile project(':common')
+        compile project(':common_server')
+        compile group: 'com.google.guava', name: 'guava', version: guavaVersion
+        compile group: 'ch.qos.logback', name: 'logback-classic', version: qosLogbackVersion
+        compile group: 'io.netty', name: 'netty-handler', version: nettyVersion
+        compile group: 'io.netty', name: 'netty-transport', version: nettyVersion
+        testCompile project(':test:testcommon')
+    }
+    javadoc {
+        dependsOn delombok
+        source = delombok.outputDir
+        failOnError = true
+    }
+}
+
+project('logstore:client') {
+    dependencies {
+        compile project(':common')
+        compile project(':common_server')
+        compile project(':logstore:shared')
+        compile group: 'com.google.guava', name: 'guava', version: guavaVersion
+        compile group: 'ch.qos.logback', name: 'logback-classic', version: qosLogbackVersion
+        testCompile project(':test:testcommon')
+    }
+    javadoc {
+        dependsOn delombok
+        source = delombok.outputDir
+        failOnError = true
+    }
+}
+
+project('logstore:server') {
+    apply plugin: 'application'
+    applicationName = "pravega-logstore"
+    mainClassName = "io.pravega.logstore.server.LogStoreServiceStarter"
+
+    dependencies {
+        compile project(':common')
+        compile project(':common_server')
+        compile project(':logstore:shared')
+        compile group: 'io.netty', name: 'netty-transport', version: nettyVersion
+        compile "io.netty:netty-transport-native-epoll:" + nettyVersion
+        compile group: 'io.netty', name: 'netty-handler', version: nettyVersion
+        compile group: 'com.google.guava', name: 'guava', version: guavaVersion
+        compile group: 'ch.qos.logback', name: 'logback-classic', version: qosLogbackVersion
+        testCompile project(':test:testcommon')
+    }
+    javadoc {
+        dependsOn delombok
+        source = delombok.outputDir
+        failOnError = true
+    }
+}
+
 project('segmentstore:contracts') {
     dependencies {
         compile project(':common')
