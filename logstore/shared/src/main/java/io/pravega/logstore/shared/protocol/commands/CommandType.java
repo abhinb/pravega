@@ -25,12 +25,16 @@ import lombok.Getter;
 
 public enum CommandType {
     HELLO(-127, Hello::readFrom),
+    ERROR_MESSAGE(-126, Hello::readFrom),
 
     CREATE_CHUNK(1, CreateChunk::readFrom),
     CHUNK_CREATED(2, ChunkCreated::readFrom),
+    CHUNK_ALREADY_EXISTS(3, ChunkAlreadyExists::readFrom),
+    CHUNK_NOT_EXISTS(4, ChunkNotExists::readFrom),
 
-    APPEND_ENTRY(3, AppendEntry::readFrom),
-    ENTRY_APPENDED(4, EntryAppended::readFrom);
+    APPEND_ENTRY(10, AppendEntry::readFrom),
+    ENTRY_APPENDED(11, EntryAppended::readFrom),
+    BAD_ENTRY_ID(12, BadEntryId::readFrom);
 
     private static final Map<Integer, CommandType> MAPPING;
     @Getter

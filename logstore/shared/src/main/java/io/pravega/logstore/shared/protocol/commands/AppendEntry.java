@@ -31,12 +31,14 @@ public final class AppendEntry extends ReleasableCommand implements Request {
     final CommandType type = CommandType.APPEND_ENTRY;
     final long chunkId;
     final long entryId;
+    final int crc32;
     final ByteBuf data;
 
     @Override
     public void writeFields(DataOutput out) throws IOException {
         out.writeLong(this.chunkId);
         out.writeLong(this.entryId);
+        out.writeInt(this.crc32);
         out.writeInt(this.data.readableBytes());
         this.data.getBytes(this.data.readerIndex(), (OutputStream) out, data.readableBytes());
     }
@@ -44,9 +46,10 @@ public final class AppendEntry extends ReleasableCommand implements Request {
     public static AbstractCommand readFrom(EnhancedByteBufInputStream in, int length) throws IOException {
         long chunkId = in.readLong();
         long entryId = in.readLong();
+        int crc32 = in.readInt();
         int dataLength = in.readInt();
         ByteBuf data = in.readFully(dataLength).retain();
-        return new AppendEntry(chunkId, entryId, data).requireRelease();
+        return new AppendEntry(chunkId, entryId, crc32, data).requireRelease();
     }
 
     @Override

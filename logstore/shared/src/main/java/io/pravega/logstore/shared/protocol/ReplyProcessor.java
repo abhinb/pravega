@@ -15,14 +15,26 @@
  */
 package io.pravega.logstore.shared.protocol;
 
+import io.pravega.logstore.shared.protocol.commands.BadEntryId;
+import io.pravega.logstore.shared.protocol.commands.ChunkAlreadyExists;
 import io.pravega.logstore.shared.protocol.commands.ChunkCreated;
+import io.pravega.logstore.shared.protocol.commands.ChunkNotExists;
 import io.pravega.logstore.shared.protocol.commands.EntryAppended;
+import io.pravega.logstore.shared.protocol.commands.ErrorMessage;
 import io.pravega.logstore.shared.protocol.commands.Hello;
 
 public interface ReplyProcessor {
     void hello(Hello hello);
 
+    void error(ErrorMessage errorMessage);
+
     void chunkCreated(ChunkCreated reply);
 
+    void chunkAlreadyExists(ChunkAlreadyExists reply);
+
+    void chunkNotExists(ChunkNotExists reply);
+
     void entryAppended(EntryAppended entryAppended);
+
+    void badEntryId(BadEntryId badEntryId);
 }

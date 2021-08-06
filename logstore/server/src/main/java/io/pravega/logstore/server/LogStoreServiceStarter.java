@@ -31,14 +31,13 @@ import lombok.val;
 public class LogStoreServiceStarter {
     private final ApplicationConfig appConfig;
     private final LogStoreConfig serviceConfig;
-    private final LogStoreServiceManager serviceManager;
+    private volatile LogStoreServiceManager serviceManager;
     private volatile ConnectionListener listener;
     private volatile boolean closed;
 
     public LogStoreServiceStarter(@NonNull ApplicationConfig config) {
         this.appConfig = config;
         this.serviceConfig = this.appConfig.getConfig(LogStoreConfig::builder);
-        this.serviceManager = createServiceManager();
     }
 
     private LogStoreServiceManager createServiceManager() {
@@ -50,12 +49,9 @@ public class LogStoreServiceStarter {
     void start() {
         Exceptions.checkNotClosed(this.closed, this);
         log.info("Initializing Service Manager ...");
-        this.serviceManager.initialize();
+        this.serviceManager = createServiceManager();
 
-        log.info("Initializing Log Store Service ...");
-        LogStoreService service = this.serviceManager.createService();
-
-        this.listener = new ConnectionListener(this.serviceConfig.getListeningIPAddress(), this.serviceConfig.getListeningPort(), service);
+        this.listener = new ConnectionListener(this.serviceConfig.getListeningIPAddress(), this.serviceConfig.getListeningPort(), this.serviceManager.getService());
         this.listener.startListening();
         log.info("ConnectionListener started successfully. Listening on {}:{}.", this.serviceConfig.getListeningIPAddress(), this.serviceConfig.getListeningPort());
         log.info("Log Store Service started.");

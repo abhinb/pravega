@@ -23,22 +23,29 @@ import java.net.UnknownHostException;
 import lombok.Getter;
 import lombok.SneakyThrows;
 
+@Getter
 public class LogStoreConfig {
-    public static final Property<String> LISTENING_IP_ADDRESS = Property.named("service.listener.host.nameOrIp", "", "listeningIPAddress");
-    public static final Property<Integer> LISTENING_PORT = Property.named("service.listener.port", 12345, "listeningPort");
+    public static final Property<String> LISTENING_IP_ADDRESS = Property.named("service.listener.host.nameOrIp", "");
+    public static final Property<Integer> LISTENING_PORT = Property.named("service.listener.port", 12345);
+
+    public static final Property<Integer> CORE_POOL_SIZE = Property.named("threadpool.core.size", 4);
+    public static final Property<Integer> WRITE_POOL_SIZE = Property.named("threadpool.write.size", 16);
+    public static final Property<Integer> READ_POOL_SIZE = Property.named("threadpool.read.size", 16);
     public static final String COMPONENT_CODE = "logstore";
 
     /**
      * The TCP Port number to listen to.
      */
-    @Getter
     private final int listeningPort;
 
     /**
      * The IP address to listen to.
      */
-    @Getter
     private final String listeningIPAddress;
+
+    private final int corePoolSize;
+    private final int writePoolSize;
+    private final int readPoolSize;
 
     private LogStoreConfig(TypedProperties properties) {
         this.listeningPort = properties.getInt(LISTENING_PORT);
@@ -48,6 +55,9 @@ public class LogStoreConfig {
             ipAddress = getHostAddress();
         }
         this.listeningIPAddress = ipAddress;
+        this.corePoolSize = properties.getPositiveInt(CORE_POOL_SIZE);
+        this.writePoolSize = properties.getPositiveInt(WRITE_POOL_SIZE);
+        this.readPoolSize = properties.getPositiveInt(READ_POOL_SIZE);
     }
 
     /**

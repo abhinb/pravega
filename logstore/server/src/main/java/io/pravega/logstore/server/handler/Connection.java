@@ -15,17 +15,17 @@
  */
 package io.pravega.logstore.server.handler;
 
-import io.pravega.logstore.shared.protocol.Reply;
 import io.pravega.logstore.shared.protocol.RequestProcessor;
+import io.pravega.logstore.shared.protocol.commands.AbstractCommand;
 
 public interface Connection extends AutoCloseable {
 
     /**
-     * Sends the provided {@link Reply} asynchronously. This operation is non-blocking.
+     * Sends the provided {@link AbstractCommand} asynchronously. This operation is non-blocking.
      *
-     * @param reply The {@link Reply} to send.
+     * @param reply The {@link AbstractCommand} to send.
      */
-    void send(Reply reply);
+    void send(AbstractCommand reply);
 
     /**
      * Sets the command processor to receive incoming commands from the client. This

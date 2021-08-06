@@ -22,9 +22,9 @@ import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.EventLoop;
-import io.pravega.logstore.shared.protocol.Reply;
 import io.pravega.logstore.shared.protocol.Request;
 import io.pravega.logstore.shared.protocol.RequestProcessor;
+import io.pravega.logstore.shared.protocol.commands.AbstractCommand;
 import io.pravega.logstore.shared.protocol.commands.ReleasableCommand;
 import lombok.Getter;
 import lombok.Setter;
@@ -70,7 +70,7 @@ public class ConnectionInboundHandler extends ChannelInboundHandlerAdapter imple
     }
 
     @Override
-    public void send(Reply reply) {
+    public void send(AbstractCommand reply) {
         Channel c = getChannel();
         // Work around for https://github.com/netty/netty/issues/3246
         EventLoop eventLoop = c.eventLoop();
@@ -98,13 +98,13 @@ public class ConnectionInboundHandler extends ChannelInboundHandlerAdapter imple
 
     @Override
     public void resumeReading() {
-        log.trace("Resuming reading from connection {}.", this);
+        log.debug("Resuming reading from connection {}.", this);
         getChannel().config().setAutoRead(true);
     }
 
     //endregion
 
-    private static void write(Channel channel, Reply data) {
+    private static void write(Channel channel, AbstractCommand data) {
         channel.write(data).addListener(ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE);
     }
 

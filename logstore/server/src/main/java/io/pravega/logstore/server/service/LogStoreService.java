@@ -15,5 +15,28 @@
  */
 package io.pravega.logstore.server.service;
 
+import io.netty.buffer.ByteBuf;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledExecutorService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
+
+@RequiredArgsConstructor
+@Slf4j
 public class LogStoreService {
+    private final LogStoreConfig logStoreConfig;
+    private final ScheduledExecutorService coreExecutor;
+    private final ScheduledExecutorService writeExecutor;
+    private final ScheduledExecutorService readExecutor;
+
+    public CompletableFuture<Void> createChunk(long chunkId) {
+        log.info("Create Chunk {}.", chunkId);
+        return CompletableFuture.completedFuture(null);
+    }
+
+    public CompletableFuture<Void> appendEntry(long chunkId, long entryId, ByteBuf data, int crc32) {
+        log.info("Append Entry ChunkId={}, EntryId={}, Crc={}, Length={}.", chunkId, entryId, data.readableBytes(), crc32); // TODO debug
+        return CompletableFuture.completedFuture(null);
+    }
 }

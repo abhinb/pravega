@@ -17,6 +17,7 @@ package io.pravega.logstore.server.service;
 
 import io.pravega.common.util.ConfigBuilder;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
@@ -128,6 +129,8 @@ public class ApplicationConfig {
         public Builder include(String filePath) throws IOException {
             try (FileReader reader = new FileReader(filePath)) {
                 this.properties.load(reader);
+            } catch (FileNotFoundException ex) {
+                // Nothing to do.
             }
 
             return this;

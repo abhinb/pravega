@@ -15,13 +15,32 @@
  */
 package io.pravega.logstore.server.service;
 
+import io.pravega.common.concurrent.ExecutorServiceHelpers;
+import java.time.Duration;
+import java.util.concurrent.ScheduledExecutorService;
 import lombok.Builder;
+import lombok.Getter;
 import lombok.NonNull;
+import lombok.val;
 
-@Builder
 public class LogStoreServiceManager implements AutoCloseable {
-    @NonNull
+    private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(45);
     private final ApplicationConfig applicationConfig;
+    private final ScheduledExecutorService coreExecutor;
+    private final ScheduledExecutorService writeExecutor;
+    private final ScheduledExecutorService readExecutor;
+    @Getter
+    private final LogStoreService service;
+
+    @Builder
+    private LogStoreServiceManager(@NonNull ApplicationConfig applicationConfig) {
+        this.applicationConfig = applicationConfig;
+        val logStoreConfig = this.applicationConfig.getConfig(LogStoreConfig::builder);
+        this.coreExecutor = ExecutorServiceHelpers.newScheduledThreadPool(logStoreConfig.getCorePoolSize(), "core");
+        this.writeExecutor = ExecutorServiceHelpers.newScheduledThreadPool(logStoreConfig.getCorePoolSize(), "write");
+        this.readExecutor = ExecutorServiceHelpers.newScheduledThreadPool(logStoreConfig.getCorePoolSize(), "read");
+        this.service = new LogStoreService(logStoreConfig, this.coreExecutor, this.writeExecutor, this.readExecutor);
+    }
 
     public static LogStoreServiceManager.LogStoreServiceManagerBuilder inMemoryBuilder(ApplicationConfig config) {
         return builder().applicationConfig(config);
@@ -29,14 +48,6 @@ public class LogStoreServiceManager implements AutoCloseable {
 
     @Override
     public void close() {
-
-    }
-
-    public void initialize() {
-
-    }
-
-    public LogStoreService createService() {
-        return null;
+        ExecutorServiceHelpers.shutdown(this.coreExecutor, this.writeExecutor, this.readExecutor);
     }
 }

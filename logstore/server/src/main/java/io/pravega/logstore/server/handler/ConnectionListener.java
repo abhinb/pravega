@@ -44,6 +44,7 @@ public class ConnectionListener implements AutoCloseable {
     private final String host;
     private final int port;
     private final LogStoreService service;
+    private final ConnectionTracker connectionTracker;
     private Channel serverChannel;
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
@@ -52,6 +53,7 @@ public class ConnectionListener implements AutoCloseable {
         this.host = host;
         this.port = port;
         this.service = service;
+        this.connectionTracker = new ConnectionTracker();
     }
 
     @Override
@@ -101,6 +103,7 @@ public class ConnectionListener implements AutoCloseable {
                         // Configure the class-specific encoder stack and request processors.
                         ConnectionInboundHandler handler = new ConnectionInboundHandler();
                         createEncodingStack(ch.remoteAddress().toString(), p);
+
                         handler.setProcessor(createRequestProcessor(handler));
                         p.addLast(handler);
                     }
@@ -118,6 +121,6 @@ public class ConnectionListener implements AutoCloseable {
     }
 
     private RequestProcessor createRequestProcessor(Connection connection) {
-        return new LogStoreRequestProcessor(this.service, connection);
+        return new LogStoreRequestProcessor(this.service, new TrackedConnection(connection, this.connectionTracker));
     }
 }
