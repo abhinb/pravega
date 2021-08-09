@@ -13,23 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.logstore.shared.protocol;
+package io.pravega.logstore.client.internal;
 
-import io.pravega.logstore.shared.protocol.commands.AppendEntry;
-import io.pravega.logstore.shared.protocol.commands.CreateChunk;
-import io.pravega.logstore.shared.protocol.commands.Hello;
-import io.pravega.logstore.shared.protocol.commands.KeepAlive;
+public interface LogChunkReplicaWriter extends AutoCloseable {
+    long getChunkId();
 
-public interface RequestProcessor extends AutoCloseable {
+    long getLastAckedEntryId();
+
+    void addEntry(PendingAddEntry addEntry);
 
     @Override
     void close();
-
-    void hello(Hello hello);
-
-    void keepAlive(KeepAlive keepAlive);
-
-    void createChunk(CreateChunk request);
-
-    void appendEntry(AppendEntry request);
 }

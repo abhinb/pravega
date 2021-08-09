@@ -19,7 +19,6 @@ import io.pravega.common.Exceptions;
 import io.pravega.logstore.server.handler.ConnectionListener;
 import io.pravega.logstore.server.service.ApplicationConfig;
 import io.pravega.logstore.server.service.LogStoreConfig;
-import io.pravega.logstore.server.service.LogStoreService;
 import io.pravega.logstore.server.service.LogStoreServiceManager;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.NonNull;

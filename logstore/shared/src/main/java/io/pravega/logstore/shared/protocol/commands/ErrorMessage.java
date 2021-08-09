@@ -21,12 +21,14 @@ import io.pravega.logstore.shared.protocol.ReplyProcessor;
 import java.io.DataOutput;
 import java.io.IOException;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
 /**
  * A generic error response that encapsulates an error code (to be used for client-side processing) and an error message
  * describing the origin of the error. This should be used to describe general exceptions where limited information is required.
  */
 @Data
+@EqualsAndHashCode(callSuper = false)
 public final class ErrorMessage extends AbstractCommand implements Reply {
     final CommandType type = CommandType.ERROR_MESSAGE;
     final long requestId;
@@ -49,6 +51,10 @@ public final class ErrorMessage extends AbstractCommand implements Reply {
 
     public static AbstractCommand readFrom(EnhancedByteBufInputStream in, int length) throws IOException {
         return new ErrorMessage(in.readLong(), in.readLong(), in.readUTF(), in.readUTF());
+    }
+
+    public RuntimeException getThrowableException() {
+        return new RuntimeException(String.format("%s: %s.", getErrorCode(), getMessage()));
     }
 
     @Override

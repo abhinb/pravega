@@ -26,6 +26,7 @@ import lombok.Getter;
 public enum CommandType {
     HELLO(-127, Hello::readFrom),
     ERROR_MESSAGE(-126, Hello::readFrom),
+    KEEP_ALIVE(-125, KeepAlive::readFrom),
 
     CREATE_CHUNK(1, CreateChunk::readFrom),
     CHUNK_CREATED(2, ChunkCreated::readFrom),

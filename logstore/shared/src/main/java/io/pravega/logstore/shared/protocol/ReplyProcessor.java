@@ -22,19 +22,46 @@ import io.pravega.logstore.shared.protocol.commands.ChunkNotExists;
 import io.pravega.logstore.shared.protocol.commands.EntryAppended;
 import io.pravega.logstore.shared.protocol.commands.ErrorMessage;
 import io.pravega.logstore.shared.protocol.commands.Hello;
+import io.pravega.logstore.shared.protocol.commands.KeepAlive;
 
 public interface ReplyProcessor {
-    void hello(Hello hello);
+    default void process(Reply reply) {
+        reply.process(this);
+    }
 
-    void error(ErrorMessage errorMessage);
+    void connectionDropped();
 
-    void chunkCreated(ChunkCreated reply);
+    void processingFailure(Exception error);
 
-    void chunkAlreadyExists(ChunkAlreadyExists reply);
+    default void hello(Hello hello) {
+        throw new UnsupportedOperationException("hello");
+    }
 
-    void chunkNotExists(ChunkNotExists reply);
+    default void keepAlive(KeepAlive keepAlive) {
+        // This method intentionally left blank.
+    }
 
-    void entryAppended(EntryAppended entryAppended);
+    default void error(ErrorMessage errorMessage) {
+        throw new UnsupportedOperationException("error");
+    }
 
-    void badEntryId(BadEntryId badEntryId);
+    default void chunkCreated(ChunkCreated reply) {
+        throw new UnsupportedOperationException("chunkCreated");
+    }
+
+    default void chunkAlreadyExists(ChunkAlreadyExists reply) {
+        throw new UnsupportedOperationException("chunkAlreadyExists");
+    }
+
+    default void chunkNotExists(ChunkNotExists reply) {
+        throw new UnsupportedOperationException("chunkNotExists");
+    }
+
+    default void entryAppended(EntryAppended entryAppended) {
+        throw new UnsupportedOperationException("entryAppended");
+    }
+
+    default void badEntryId(BadEntryId badEntryId) {
+        throw new UnsupportedOperationException("badEntryId");
+    }
 }

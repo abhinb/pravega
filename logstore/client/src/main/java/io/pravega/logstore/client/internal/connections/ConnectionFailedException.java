@@ -13,23 +13,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.logstore.shared.protocol;
+package io.pravega.logstore.client.internal.connections;
 
-import io.pravega.logstore.shared.protocol.commands.AppendEntry;
-import io.pravega.logstore.shared.protocol.commands.CreateChunk;
-import io.pravega.logstore.shared.protocol.commands.Hello;
-import io.pravega.logstore.shared.protocol.commands.KeepAlive;
+/**
+ * The connection has failed, and needs to be re-established.
+ */
+public class ConnectionFailedException extends Exception {
 
-public interface RequestProcessor extends AutoCloseable {
+    private static final long serialVersionUID = 1L;
 
-    @Override
-    void close();
+    public ConnectionFailedException() {
+        super();
+    }
 
-    void hello(Hello hello);
+    public ConnectionFailedException(String string) {
+        super(string);
+    }
 
-    void keepAlive(KeepAlive keepAlive);
+    public ConnectionFailedException(Throwable throwable) {
+        super(throwable);
+    }
 
-    void createChunk(CreateChunk request);
-
-    void appendEntry(AppendEntry request);
 }

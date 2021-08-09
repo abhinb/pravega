@@ -32,6 +32,7 @@ import io.pravega.logstore.shared.protocol.commands.CreateChunk;
 import io.pravega.logstore.shared.protocol.commands.EntryAppended;
 import io.pravega.logstore.shared.protocol.commands.ErrorMessage;
 import io.pravega.logstore.shared.protocol.commands.Hello;
+import io.pravega.logstore.shared.protocol.commands.KeepAlive;
 import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -62,6 +63,11 @@ public class LogStoreRequestProcessor implements RequestProcessor {
             log.warn(hello.getRequestId(), "Incompatible wire protocol versions {} from connection {}", hello, connection);
             close();
         }
+    }
+
+    @Override
+    public void keepAlive(KeepAlive keepAlive) {
+        // This method intentionally left blank.
     }
 
     @Override
