@@ -13,27 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.logstore.server.handler;
+package io.pravega.logstore.shared.protocol;
 
 import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;
 import lombok.extern.slf4j.Slf4j;
 
-/**
- * Used to make sure any stray exceptions that make it back to the socket get logged.
- */
 @Slf4j
-class ExceptionLoggingHandler extends ChannelDuplexHandler {
-
-    private final String connectionName;
-
-    public ExceptionLoggingHandler(String connectionName) {
-        this.connectionName = connectionName;
-    }
+public class ExceptionLoggingHandler extends ChannelDuplexHandler {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
-        log.error("Uncaught exception on connection " + connectionName, cause);
+        log.error("Uncaught exception on connection " + ctx.name(), cause);
         super.exceptionCaught(ctx, cause);
     }
 
@@ -42,7 +33,7 @@ class ExceptionLoggingHandler extends ChannelDuplexHandler {
         try {
             super.channelRead(ctx, msg);
         } catch (Exception e) {
-            log.error("Uncaught exception observed during channel read on connection {}", connectionName, e);
+            log.error("Uncaught exception observed during channel read on connection {}", ctx.name(), e);
             throw e;
         }
     }

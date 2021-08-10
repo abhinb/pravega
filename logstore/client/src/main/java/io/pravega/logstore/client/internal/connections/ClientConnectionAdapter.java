@@ -22,7 +22,6 @@ import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
-import io.pravega.common.Exceptions;
 import io.pravega.common.util.ReusableFutureLatch;
 import io.pravega.logstore.shared.protocol.Reply;
 import io.pravega.logstore.shared.protocol.ReplyProcessor;
@@ -37,6 +36,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import lombok.AccessLevel;
 import lombok.Getter;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 
@@ -44,7 +44,7 @@ import lombok.val;
 public class ClientConnectionAdapter extends ChannelInboundHandlerAdapter implements AutoCloseable {
     private static final int KEEP_ALIVE_TIMEOUT_SECONDS = 20;
     private final String connectionName;
-    private final AtomicReference<Channel> channel = new AtomicReference<>();
+    private volatile Channel channel;
     private final AtomicReference<ScheduledFuture<?>> keepAliveFuture = new AtomicReference<>();
     private final AtomicBoolean recentMessage = new AtomicBoolean(true);
     private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -53,39 +53,13 @@ public class ClientConnectionAdapter extends ChannelInboundHandlerAdapter implem
     private final KeepAliveTask keepAlive = new KeepAliveTask();
     @Getter
     private final ReusableFutureLatch<Void> registeredFutureLatch = new ReusableFutureLatch<>();
-    private volatile ReplyProcessor replyProcessor;
+    private final ReplyProcessor replyProcessor;
 
     private final AtomicBoolean disableFlow = new AtomicBoolean(false);
 
-    public ClientConnectionAdapter(String connectionName) {
+    public ClientConnectionAdapter(String connectionName, @NonNull ReplyProcessor replyProcessor) {
         this.connectionName = connectionName;
-    }
-
-    /**
-     * Create a {@link ClientConnection} where flows are disabled. This implies that there is only one flow on the underlying
-     * network connection.
-     *
-     * @param rp The ReplyProcessor.
-     * @return Client Connection object.
-     */
-    public ClientConnection createConnectionWithFlowDisabled(final ReplyProcessor rp) {
-        Exceptions.checkNotClosed(closed.get(), this);
-        Preconditions.checkState(!disableFlow.getAndSet(true), "Flows are disabled, incorrect usage pattern.");
-        log.info("Creating a new connection with flow disabled for endpoint {}. The current Channel is {}.", connectionName, channel.get());
-        this.replyProcessor = rp;
-        return new NettyConnection(connectionName, this);
-    }
-
-    /**
-     * Close a flow. This is invoked when the ClientConnection is closed.
-     *
-     * @param clientConnection Client Connection.
-     */
-    public void closeFlow(ClientConnection clientConnection) {
-        final NettyConnection clientConnectionImpl = (NettyConnection) clientConnection;
-        log.info("Closing Flow for endpoint {}", clientConnectionImpl.getConnectionName());
-        // close the channel immediately since this netty channel will not be reused by other flows.
-        close();
+        this.replyProcessor = replyProcessor;
     }
 
     /**
@@ -95,7 +69,7 @@ public class ClientConnectionAdapter extends ChannelInboundHandlerAdapter implem
      * @throws ConnectionFailedException Throw if connection is not established.
      */
     Channel getChannel() throws ConnectionFailedException {
-        Channel ch = channel.get();
+        Channel ch = this.channel;
         if (ch == null) {
             throw new ConnectionFailedException("Connection to " + connectionName + " is not established.");
         }
@@ -123,7 +97,7 @@ public class ClientConnectionAdapter extends ChannelInboundHandlerAdapter implem
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
         super.channelActive(ctx);
         Channel ch = ctx.channel();
-        channel.set(ch);
+        this.channel = ch;
         log.info("Connection established with endpoint {} on channel {}", connectionName, ch);
         ch.writeAndFlush(new Hello(AbstractCommand.WIRE_VERSION, AbstractCommand.OLDEST_COMPATIBLE_VERSION), ch.voidPromise());
         registeredFutureLatch.release(null); //release all futures waiting for channel registration to complete.
@@ -150,7 +124,7 @@ public class ClientConnectionAdapter extends ChannelInboundHandlerAdapter implem
         if (future != null) {
             future.cancel(false);
         }
-        channel.set(null);
+        this.channel = null;
         log.info("Connection drop observed with endpoint {}", connectionName);
         val rp = this.replyProcessor;
         try {
@@ -215,8 +189,9 @@ public class ClientConnectionAdapter extends ChannelInboundHandlerAdapter implem
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
-            Channel ch = channel.getAndSet(null);
+            Channel ch = this.channel;
             if (ch != null) {
+                this.channel = null;
                 log.info("Closing connection with endpoint {} on channel {}", connectionName, ch);
                 invokeProcessingFailureForAllFlows(new ConnectionClosedException());
                 ch.close();

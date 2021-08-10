@@ -33,6 +33,7 @@ import io.pravega.common.Exceptions;
 import io.pravega.logstore.server.service.LogStoreService;
 import io.pravega.logstore.shared.protocol.CommandDecoder;
 import io.pravega.logstore.shared.protocol.CommandEncoder;
+import io.pravega.logstore.shared.protocol.ExceptionLoggingHandler;
 import io.pravega.logstore.shared.protocol.RequestProcessor;
 import io.pravega.logstore.shared.protocol.commands.AbstractCommand;
 import lombok.NonNull;
@@ -102,7 +103,7 @@ public class ConnectionListener implements AutoCloseable {
 
                         // Configure the class-specific encoder stack and request processors.
                         ConnectionInboundHandler handler = new ConnectionInboundHandler();
-                        createEncodingStack(ch.remoteAddress().toString(), p);
+                        createEncodingStack(p);
 
                         handler.setProcessor(createRequestProcessor(handler));
                         p.addLast(handler);
@@ -113,8 +114,8 @@ public class ConnectionListener implements AutoCloseable {
         this.serverChannel = b.bind(this.host, this.port).awaitUninterruptibly().channel();
     }
 
-    private void createEncodingStack(String connectionName, ChannelPipeline p) {
-        p.addLast(new ExceptionLoggingHandler(connectionName));
+    private void createEncodingStack(ChannelPipeline p) {
+        p.addLast(new ExceptionLoggingHandler());
         p.addLast(new CommandEncoder());
         p.addLast(new LengthFieldBasedFrameDecoder(AbstractCommand.MAX_COMMAND_SIZE, 4, 4));
         p.addLast(new CommandDecoder());

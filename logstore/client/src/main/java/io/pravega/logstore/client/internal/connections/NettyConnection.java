@@ -15,7 +15,6 @@
  */
 package io.pravega.logstore.client.internal.connections;
 
-import com.google.common.annotations.VisibleForTesting;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
@@ -26,21 +25,20 @@ import io.pravega.logstore.shared.protocol.commands.AbstractCommand;
 import io.pravega.logstore.shared.protocol.commands.AppendEntry;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.Getter;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 
 
 @Slf4j
 public class NettyConnection implements ClientConnection {
     @Getter
-    private final String connectionName;
-    @VisibleForTesting
-    @Getter
-    private final ClientConnectionAdapter nettyHandler;
+    private final Channel channel;
+    private final ClientConnectionAdapter adapter;
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
-    public NettyConnection(String connectionName, ClientConnectionAdapter nettyHandler) {
-        this.connectionName = connectionName;
-        this.nettyHandler = nettyHandler;
+    public NettyConnection(@NonNull Channel channel, @NonNull ClientConnectionAdapter adapter) {
+        this.channel = channel;
+        this.adapter = adapter;
     }
 
     @Override
@@ -56,13 +54,12 @@ public class NettyConnection implements ClientConnection {
     }
 
     private void write(AbstractCommand cmd) throws ConnectionFailedException {
-        Channel channel = nettyHandler.getChannel();
         EventLoop eventLoop = channel.eventLoop();
         ChannelPromise promise = channel.newPromise();
         promise.addListener(new ChannelFutureListener() {
             @Override
             public void operationComplete(ChannelFuture future) {
-                nettyHandler.setRecentMessage();
+                adapter.setRecentMessage();
                 if (!future.isSuccess()) {
                     future.channel().pipeline().fireExceptionCaught(future.cause());
                 }
@@ -82,14 +79,12 @@ public class NettyConnection implements ClientConnection {
 
     @Override
     public void sendAsync(AppendEntry cmd, CompletedCallback callback) {
-        Channel channel = null;
         try {
             checkClientConnectionClosed();
-            channel = nettyHandler.getChannel();
             log.debug("Write and flush message {} on channel {}", cmd, channel);
             channel.writeAndFlush(cmd)
                     .addListener((Future<? super Void> f) -> {
-                        nettyHandler.setRecentMessage();
+                        adapter.setRecentMessage();
                         if (f.isSuccess()) {
                             callback.complete(null);
                         } else {
@@ -108,14 +103,14 @@ public class NettyConnection implements ClientConnection {
     @Override
     public void close() {
         if (!closed.getAndSet(true)) {
-            nettyHandler.closeFlow(this);
+            channel.close();
         }
     }
 
     private void checkClientConnectionClosed() throws ConnectionFailedException {
         if (closed.get()) {
-            log.error("ClientConnection to {} with flow id disabled is already closed", connectionName);
-            throw new ConnectionFailedException("Client connection already closed for flow disabled");
+            log.error("ClientConnection to {} with flow id disabled is already closed", channel.remoteAddress());
+            throw new ConnectionFailedException("Client connection already closed");
         }
     }
 

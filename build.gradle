@@ -438,6 +438,7 @@ project('logstore:client') {
         compile project(':logstore:shared')
         compile group: 'com.google.guava', name: 'guava', version: guavaVersion
         compile group: 'ch.qos.logback', name: 'logback-classic', version: qosLogbackVersion
+        compile "io.netty:netty-transport-native-epoll:" + nettyVersion
         testCompile project(':test:testcommon')
     }
     javadoc {

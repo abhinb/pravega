@@ -65,7 +65,7 @@ public class LogStoreServiceStarter {
     }
 
     @SneakyThrows
-    void close(AutoCloseable c, String name) {
+    private void close(AutoCloseable c, String name) {
         if (c != null) {
             c.close();
             log.info("{} closed.", name);
