@@ -16,14 +16,16 @@
 package io.pravega.logstore.server;
 
 import io.netty.buffer.Unpooled;
+import io.pravega.common.AbstractTimer;
+import io.pravega.common.Timer;
 import io.pravega.common.concurrent.Futures;
 import io.pravega.logstore.client.internal.LogChunkReplicaWriterImpl;
 import io.pravega.logstore.client.internal.PendingAddEntry;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import io.pravega.logstore.server.service.ApplicationConfig;
-import io.pravega.logstore.server.service.LogStoreConfig;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Random;
 import java.util.stream.Collectors;
 import lombok.Cleanup;
@@ -60,6 +62,8 @@ public class IntegrationTests {
 
     @Test
     public void testEndToEnd() throws Exception {
+        final int count = 1000;
+        final int writeSize = 1000000;
         final long chunkId = 0L;
         @Cleanup
         val factory = new ClientConnectionFactory(4);
@@ -70,24 +74,44 @@ public class IntegrationTests {
         val init = writer.initialize(factory);
         init.join();
         log.info("Initialized Writer");
-        Thread.sleep(5000);
 
         val entries = new ArrayList<PendingAddEntry>();
+        val latencies = Collections.synchronizedList(new ArrayList<Integer>());
         val rnd = new Random(0);
-        for (int i = 0; i < 100; i++) {
-            val data = new byte[100000];
-            rnd.nextBytes(data);
+        val data = new byte[writeSize];
+        rnd.nextBytes(data);
+        val timer = new Timer();
+        for (int i = 0; i < count; i++) {
+            val startTimeNanos = timer.getElapsedNanos();
             val e = new PendingAddEntry(chunkId, i, i * i, Unpooled.wrappedBuffer(data));
             writer.addEntry(e);
             entries.add(e);
-            e.getCompletion().thenRun(() -> log.info("    Entry {} acked.", e.getEntryId()));
+            e.getCompletion().thenRun(() -> {
+                val elapsed = timer.getElapsedNanos() - startTimeNanos;
+                latencies.add((int) (elapsed / AbstractTimer.NANOS_TO_MILLIS));
+                log.debug("    Entry {} acked.", e.getEntryId());
+            });
+            e.getCompletion().join();//todo
         }
 
-        log.info("Wrote some entries.");
+        val writeSendTime = timer.getElapsedMillis();
+        log.info("Wrote {} entries.", count);
 
         val futures = entries.stream().map(PendingAddEntry::getCompletion).collect(Collectors.toList());
         Futures.allOf(futures).join();
+        val writeAckTime = timer.getElapsedMillis();
         log.info("All entries acked.");
+        //Thread.sleep(5000);// TODO
+
+        val avgLatency = latencies.stream().mapToInt(i -> i).average().getAsDouble();
+        val maxLatency = latencies.stream().mapToInt(i -> i).max().getAsInt();
+        latencies.sort(Integer::compareTo);
+        System.out.println(String.format("RESULT: WriteSend: %s ms, WriteAck: %s ms, L_avg: %.1f, L50: %s, L90: %s, L99: %s, L_max: %s",
+                writeSendTime, writeAckTime, avgLatency,
+                latencies.get(latencies.size() / 2),
+                latencies.get((int) (latencies.size() * 0.9)),
+                latencies.get((int) (latencies.size() * 0.99)),
+                maxLatency));
 
     }
 }

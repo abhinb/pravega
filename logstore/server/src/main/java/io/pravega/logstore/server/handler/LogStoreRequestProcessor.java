@@ -17,6 +17,7 @@ package io.pravega.logstore.server.handler;
 
 import io.pravega.common.Exceptions;
 import io.pravega.common.tracing.TagLogger;
+import io.pravega.logstore.server.ChunkEntry;
 import io.pravega.logstore.server.service.LogStoreService;
 import io.pravega.logstore.shared.BadEntryIdException;
 import io.pravega.logstore.shared.LogChunkExistsException;
@@ -36,6 +37,7 @@ import io.pravega.logstore.shared.protocol.commands.KeepAlive;
 import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.val;
 import org.slf4j.LoggerFactory;
 
 import static io.pravega.common.function.Callbacks.invokeSafely;
@@ -88,9 +90,9 @@ public class LogStoreRequestProcessor implements RequestProcessor {
     public void appendEntry(@NonNull AppendEntry request) {
         log.debug(request.getRequestId(), "{}: Append ChunkId={}, EntryId={}, Crc={}, Length={}.",
                 this.connection, request.getChunkId(), request.getEntryId(), request.getCrc32(), request.getData().readableBytes());
-        int appendLength = request.getData().readableBytes();
-        this.connection.adjustOutstandingBytes(appendLength);
-        this.service.appendEntry(request.getChunkId(), request.getEntryId(), request.getData(), request.getCrc32())
+        val entry = new ChunkEntry(request.getChunkId(), request.getEntryId(), request.getCrc32(), request.getData());
+        this.connection.adjustOutstandingBytes(entry.getLength());
+        this.service.appendEntry(entry)
                 .thenRun(() -> connection.send(new EntryAppended(request.getChunkId(), request.getEntryId()))) // TODO: serialize all this (reduce chatter).
                 .whenComplete((r, ex) -> {
                     if (ex == null) {
@@ -100,7 +102,7 @@ public class LogStoreRequestProcessor implements RequestProcessor {
                     }
                 })
                 .whenComplete((v, e) -> {
-                    this.connection.adjustOutstandingBytes(-appendLength);
+                    this.connection.adjustOutstandingBytes(-entry.getLength());
                     request.release(); // Release the buffers when done.
                 });
     }

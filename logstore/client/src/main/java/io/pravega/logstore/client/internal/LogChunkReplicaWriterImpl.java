@@ -79,10 +79,7 @@ public class LogChunkReplicaWriterImpl implements LogChunkReplicaWriter {
                         createLogChunk();
                     })
                     .whenComplete((r, ex) -> {
-                        if (ex == null) {
-                            state.initialized.complete(null);
-                        } else {
-                            state.initialized.completeExceptionally(ex);
+                        if (ex != null) {
                             state.fail(ex);
                             close();
                         }
@@ -187,6 +184,7 @@ public class LogChunkReplicaWriterImpl implements LogChunkReplicaWriter {
             this.closed = true;
             val pending = removeAllPending();
             executor.execute(() -> {
+                this.initialized.completeExceptionally(ex);
                 for (PendingAddEntry toAck : pending) {
                     try {
                         toAck.getCompletion().complete(null);
@@ -296,6 +294,7 @@ public class LogChunkReplicaWriterImpl implements LogChunkReplicaWriter {
         @Override
         public void chunkCreated(ChunkCreated chunkCreated) {
             log.info("{}: Log Chunk Replica created.", traceLogId);
+            state.initialized.complete(null);
         }
 
         @Override

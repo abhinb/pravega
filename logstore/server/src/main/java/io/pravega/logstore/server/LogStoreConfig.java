@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.logstore.server.service;
+package io.pravega.logstore.server;
 
 import io.pravega.common.util.ConfigBuilder;
 import io.pravega.common.util.Property;
 import io.pravega.common.util.TypedProperties;
 import java.net.Inet4Address;
 import java.net.UnknownHostException;
+import java.nio.file.Path;
 import lombok.Getter;
 import lombok.SneakyThrows;
 
@@ -28,10 +29,17 @@ public class LogStoreConfig {
     public static final Property<String> LISTENING_IP_ADDRESS = Property.named("service.listener.host.nameOrIp", "");
     public static final Property<Integer> LISTENING_PORT = Property.named("service.listener.port", 12345);
 
+    public static final Property<String> STORAGE_PATH = Property.named("storage.path", "/tmp/logstore");
     public static final Property<Integer> CORE_POOL_SIZE = Property.named("threadpool.core.size", 4);
     public static final Property<Integer> WRITE_POOL_SIZE = Property.named("threadpool.write.size", 16);
     public static final Property<Integer> READ_POOL_SIZE = Property.named("threadpool.read.size", 16);
+    public static final Property<Integer> MAX_QUEUE_READ_COUNT = Property.named("writer.queue.read.size.max", 10);
+    public static final Property<Integer> WRITE_BLOCK_SIZE = Property.named("writer.block.size.bytes", 4 * 1024 * 1024);
+
     public static final String COMPONENT_CODE = "logstore";
+
+    private static final String DATA_FILE_PATH_TEMPLATE = "%s.data";
+    private static final String INDEX_FILE_PATH_TEMPLATE = "%s.index";
 
     /**
      * The TCP Port number to listen to.
@@ -43,9 +51,12 @@ public class LogStoreConfig {
      */
     private final String listeningIPAddress;
 
+    private final String storagePath;
     private final int corePoolSize;
     private final int writePoolSize;
     private final int readPoolSize;
+    private final int maxQueueReadCount;
+    private final int writeBlockSize;
 
     private LogStoreConfig(TypedProperties properties) {
         this.listeningPort = properties.getInt(LISTENING_PORT);
@@ -55,9 +66,12 @@ public class LogStoreConfig {
             ipAddress = getHostAddress();
         }
         this.listeningIPAddress = ipAddress;
+        this.storagePath = properties.get(STORAGE_PATH); // Not checked whether a valid path; we do that elsewhere.
         this.corePoolSize = properties.getPositiveInt(CORE_POOL_SIZE);
         this.writePoolSize = properties.getPositiveInt(WRITE_POOL_SIZE);
         this.readPoolSize = properties.getPositiveInt(READ_POOL_SIZE);
+        this.maxQueueReadCount = properties.getPositiveInt(MAX_QUEUE_READ_COUNT);
+        this.writeBlockSize = properties.getPositiveInt(WRITE_BLOCK_SIZE);
     }
 
     /**
@@ -73,4 +87,13 @@ public class LogStoreConfig {
     private static String getHostAddress() {
         return Inet4Address.getLocalHost().getHostAddress();
     }
+
+    public Path getChunkReplicaDataFilePath(long chunkId) {
+        return Path.of(this.storagePath, String.format(DATA_FILE_PATH_TEMPLATE, chunkId));
+    }
+
+    public Path getChunkReplicaIndexFilePath(long chunkId) {
+        return Path.of(this.storagePath, String.format(INDEX_FILE_PATH_TEMPLATE, chunkId));
+    }
 }
+

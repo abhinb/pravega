@@ -16,6 +16,9 @@
 package io.pravega.logstore.server.service;
 
 import io.pravega.common.concurrent.ExecutorServiceHelpers;
+import io.pravega.logstore.server.LogStoreConfig;
+import io.pravega.logstore.server.chunks.ChunkReplicaFactory;
+import io.pravega.logstore.server.chunks.ChunkReplicaManager;
 import java.time.Duration;
 import java.util.concurrent.ScheduledExecutorService;
 import lombok.Builder;
@@ -29,6 +32,9 @@ public class LogStoreServiceManager implements AutoCloseable {
     private final ScheduledExecutorService coreExecutor;
     private final ScheduledExecutorService writeExecutor;
     private final ScheduledExecutorService readExecutor;
+
+    private final ChunkReplicaFactory chunkReplicaFactory;
+    private final ChunkReplicaManager chunkReplicaManager;
     @Getter
     private final LogStoreService service;
 
@@ -39,7 +45,10 @@ public class LogStoreServiceManager implements AutoCloseable {
         this.coreExecutor = ExecutorServiceHelpers.newScheduledThreadPool(logStoreConfig.getCorePoolSize(), "core");
         this.writeExecutor = ExecutorServiceHelpers.newScheduledThreadPool(logStoreConfig.getCorePoolSize(), "write");
         this.readExecutor = ExecutorServiceHelpers.newScheduledThreadPool(logStoreConfig.getCorePoolSize(), "read");
-        this.service = new LogStoreService(logStoreConfig, this.coreExecutor, this.writeExecutor, this.readExecutor);
+        this.chunkReplicaFactory = new ChunkReplicaFactory(logStoreConfig, this.writeExecutor);
+        this.chunkReplicaFactory.initialize();
+        this.chunkReplicaManager = new ChunkReplicaManager(this.chunkReplicaFactory, this.writeExecutor, this.readExecutor);
+        this.service = new LogStoreService(this.chunkReplicaManager, logStoreConfig, this.coreExecutor);
     }
 
     public static LogStoreServiceManager.LogStoreServiceManagerBuilder inMemoryBuilder(ApplicationConfig config) {
