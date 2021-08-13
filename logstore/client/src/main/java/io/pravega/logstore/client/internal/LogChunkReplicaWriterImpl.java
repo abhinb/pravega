@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.annotation.concurrent.GuardedBy;
 import lombok.Getter;
 import lombok.NonNull;
@@ -50,7 +51,7 @@ import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 
 @Slf4j
-public class LogChunkReplicaWriterImpl implements LogChunkReplicaWriter {
+public class LogChunkReplicaWriterImpl implements LogChunkWriter {
     @Getter
     private final long chunkId;
     private final URI logStoreUri;
@@ -60,13 +61,13 @@ public class LogChunkReplicaWriterImpl implements LogChunkReplicaWriter {
     private final Object writeOrderLock = new Object();
     private final String traceLogId;
 
-    public LogChunkReplicaWriterImpl(long chunkId, @NonNull URI logStoreUri,
+    public LogChunkReplicaWriterImpl(long logId, long chunkId, @NonNull URI logStoreUri,
                                      @NonNull Executor executor) {
         this.chunkId = chunkId;
         this.logStoreUri = logStoreUri;
         this.executor = executor;
         this.state = new State();
-        this.traceLogId = String.format("[%s-%s]", chunkId, logStoreUri);
+        this.traceLogId = String.format("ChunkWriter[%s-%s-%s:%s]", logId, chunkId, logStoreUri.getHost(), logStoreUri.getPort());
     }
 
     @Override
@@ -97,15 +98,24 @@ public class LogChunkReplicaWriterImpl implements LogChunkReplicaWriter {
         return this.state.getLastAckedEntryId();
     }
 
+    @Override
+    public long getLength() {
+        return 0;
+    }
+
+    @Override
+    public boolean isSealed() {
+        return this.state.isClosed();
+    }
 
     @SneakyThrows
-    public void createLogChunk() {
+    private void createLogChunk() {
         val cc = new CreateChunk(0L, this.chunkId);
         connection.send(cc);
     }
 
     @Override
-    public void addEntry(PendingAddEntry entry) {
+    public CompletableFuture<Void> addEntry(Entry entry) {
         Exceptions.checkNotClosed(this.state.isClosed(), this);
         Preconditions.checkState(this.state.isInitialized(), "Not initialized.");
         Preconditions.checkArgument(entry.getChunkId() == this.chunkId);
@@ -116,10 +126,10 @@ public class LogChunkReplicaWriterImpl implements LogChunkReplicaWriter {
                 val ae = new AppendEntry(entry.getChunkId(), entry.getEntryId(), entry.getCrc32(), entry.getData());
                 log.trace("{}: Sending AppendEntry: {}", this, ae);
                 connection.send(ae);
-                state.addPending(entry);
+                return state.addPending(entry);
             } catch (Throwable ex) {
-                entry.getCompletion().completeExceptionally(ex);
                 log.error("{}: Failed to add new entry {}. ", this.traceLogId, entry, ex);
+                return Futures.failedFuture(ex);
             }
         }
     }
@@ -147,11 +157,12 @@ public class LogChunkReplicaWriterImpl implements LogChunkReplicaWriter {
         @Getter
         private volatile boolean closed = false;
         @GuardedBy("lock")
-        private final ArrayDeque<PendingAddEntry> pending = new ArrayDeque<>();
+        private final ArrayDeque<PendingChunkReplicaEntry> pending = new ArrayDeque<>();
         @GuardedBy("lock")
         private long nextExpectedEntryId = 0;
         @GuardedBy("lock")
         private long lastAckedEntryId;
+        private final AtomicLong length = new AtomicLong(0);
         private final CompletableFuture<Void> initialized = new CompletableFuture<>();
 
         boolean isInitialized() {
@@ -180,31 +191,24 @@ public class LogChunkReplicaWriterImpl implements LogChunkReplicaWriter {
          * @param ex Error that has occurred that needs to be handled by tearing down the connection.
          */
         void fail(Throwable ex) {
-            log.info("{}: Handling exception.", traceLogId, ex);
+            log.info("{}: Handling exception {}.", traceLogId, ex.toString());
             this.closed = true;
             val pending = removeAllPending();
             executor.execute(() -> {
                 this.initialized.completeExceptionally(ex);
-                for (PendingAddEntry toAck : pending) {
-                    try {
-                        toAck.getCompletion().complete(null);
-                    } finally {
-                        toAck.getData().release();
-                    }
+                for (PendingChunkReplicaEntry toAck : pending) {
+                    toAck.completion.complete(null);
                 }
             });
         }
 
         void ackUpTo(long lastAckedEntryId) {
-            final List<PendingAddEntry> pendingEntries = removePending(lastAckedEntryId);
+            final List<PendingChunkReplicaEntry> pendingEntries = removePending(lastAckedEntryId);
             // Complete the futures and release buffer in a different thread.
             executor.execute(() -> {
-                for (PendingAddEntry toAck : pendingEntries) {
-                    try {
-                        toAck.getCompletion().complete(null);
-                    } finally {
-                        toAck.getData().release();
-                    }
+                for (PendingChunkReplicaEntry toAck : pendingEntries) {
+                    this.length.addAndGet(toAck.entry.getLength());
+                    toAck.completion.complete(null);
                 }
             });
         }
@@ -214,24 +218,26 @@ public class LogChunkReplicaWriterImpl implements LogChunkReplicaWriter {
          *
          * @return The EventNumber for the event.
          */
-        private void addPending(PendingAddEntry entry) {
+        private CompletableFuture<Void> addPending(Entry entry) {
+            val pe = new PendingChunkReplicaEntry(entry);
             synchronized (lock) {
                 Preconditions.checkArgument(entry.getEntryId() == this.nextExpectedEntryId,
                         "Unexpected EntryId. Expected %s, given %s.", this.nextExpectedEntryId, entry.getEntryId());
                 log.trace("{}: Adding {} to inflight.", traceLogId, entry);
-                pending.addLast(entry);
+                pending.addLast(pe);
                 this.nextExpectedEntryId++;
             }
+            return pe.completion;
         }
 
         /**
          * Remove all events with event numbers below the provided level from inflight and return them.
          */
-        private List<PendingAddEntry> removePending(long upToEntryId) {
+        private List<PendingChunkReplicaEntry> removePending(long upToEntryId) {
             synchronized (lock) {
-                List<PendingAddEntry> result = new ArrayList<>();
-                PendingAddEntry entry = pending.peekFirst();
-                while (entry != null && entry.getEntryId() <= upToEntryId) {
+                List<PendingChunkReplicaEntry> result = new ArrayList<>();
+                PendingChunkReplicaEntry entry = pending.peekFirst();
+                while (entry != null && entry.entry.getEntryId() <= upToEntryId) {
                     pending.pollFirst();
                     result.add(entry);
                     entry = pending.peekFirst();
@@ -242,18 +248,18 @@ public class LogChunkReplicaWriterImpl implements LogChunkReplicaWriter {
             }
         }
 
-        private List<PendingAddEntry> removeAllPending() {
+        private List<PendingChunkReplicaEntry> removeAllPending() {
             synchronized (lock) {
-                List<PendingAddEntry> inflightEvents = new ArrayList<>(pending);
-                pending.clear();
-                return inflightEvents;
+                List<PendingChunkReplicaEntry> pending = new ArrayList<>(this.pending);
+                this.pending.clear();
+                return pending;
             }
         }
 
         private Long getLowestPendingEntryId() {
             synchronized (lock) {
-                PendingAddEntry entry = pending.peekFirst();
-                return entry == null ? null : entry.getEntryId();
+                PendingChunkReplicaEntry entry = pending.peekFirst();
+                return entry == null ? null : entry.entry.getEntryId();
             }
         }
     }
@@ -325,4 +331,10 @@ public class LogChunkReplicaWriterImpl implements LogChunkReplicaWriter {
     }
 
     //endregion
+
+    @RequiredArgsConstructor
+    private static class PendingChunkReplicaEntry {
+        final Entry entry;
+        final CompletableFuture<Void> completion = new CompletableFuture<>();
+    }
 }

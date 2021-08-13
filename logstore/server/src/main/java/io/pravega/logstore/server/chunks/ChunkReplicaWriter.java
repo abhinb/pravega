@@ -138,7 +138,7 @@ public class ChunkReplicaWriter implements AutoCloseable {
                     throw ex;
                 }
 
-                if (writes.isEmpty()) {
+                if (writes.isEmpty()) { // TODO yield after a long time to give others a chance to use the pool.
                     // Check if there are more operations to process. If so, do it now.
                     writes = this.writeQueue.poll(this.config.getMaxQueueReadCount());
                 }

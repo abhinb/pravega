@@ -19,14 +19,22 @@ import io.netty.buffer.Unpooled;
 import io.pravega.common.AbstractTimer;
 import io.pravega.common.Timer;
 import io.pravega.common.concurrent.Futures;
+import io.pravega.logstore.client.LogClientConfig;
+import io.pravega.logstore.client.internal.EntryAddress;
 import io.pravega.logstore.client.internal.LogChunkReplicaWriterImpl;
+import io.pravega.logstore.client.internal.LogChunkWriterImpl;
+import io.pravega.logstore.client.internal.LogServerManager;
+import io.pravega.logstore.client.internal.LogWriterImpl;
 import io.pravega.logstore.client.internal.PendingAddEntry;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import io.pravega.logstore.server.service.ApplicationConfig;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.Random;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import lombok.Cleanup;
 import lombok.extern.slf4j.Slf4j;
@@ -37,45 +45,56 @@ import org.junit.Test;
 
 @Slf4j
 public class IntegrationTests {
-    private static final URI LOCAL_URI = URI.create("tcp://127.0.0.1:12345");
-    private final ApplicationConfig appConfig = ApplicationConfig.builder()
-            .include(LogStoreConfig.builder()
-                    .with(LogStoreConfig.LISTENING_IP_ADDRESS, LOCAL_URI.getHost())
-                    .with(LogStoreConfig.LISTENING_PORT, LOCAL_URI.getPort()))
-            .build();
+    private static final URI LOCAL_URI_1 = URI.create("tcp://127.0.0.1:12345");
+    private static final URI LOCAL_URI_2 = URI.create("tcp://127.0.0.1:12346");
+    private static final URI LOCAL_URI_3 = URI.create("tcp://127.0.0.1:12347");
+    private static final LogServerManager LOG_SERVER_MANAGER = new LogServerManager(
+            Arrays.asList(LOCAL_URI_1, LOCAL_URI_2, LOCAL_URI_3));
 
-    private LogStoreServiceStarter service;
+    private List<LogStoreServiceStarter> services;
 
     @Before
     public void setup() {
-        this.service = new LogStoreServiceStarter(appConfig);
-        this.service.start();
+        this.services = LOG_SERVER_MANAGER.getServerUris().stream()
+                .map(uri -> {
+                    val appConfig = ApplicationConfig.builder()
+                            .include(LogStoreConfig.builder()
+                                    .with(LogStoreConfig.LISTENING_IP_ADDRESS, uri.getHost())
+                                    .with(LogStoreConfig.LISTENING_PORT, uri.getPort())
+                                    .with(LogStoreConfig.STORAGE_PATH, LogStoreConfig.STORAGE_PATH.getDefaultValue() + "/" + uri.getPort()))
+                            .build();
+                    return new LogStoreServiceStarter(appConfig);
+                })
+                .collect(Collectors.toList());
+        this.services.forEach(LogStoreServiceStarter::start);
     }
 
     @After
     public void tearDown() {
-        val s = this.service;
-        if (s != null) {
-            s.shutdown();
-        }
+        this.services.forEach(LogStoreServiceStarter::shutdown);
     }
 
     @Test
-    public void testEndToEnd() throws Exception {
-        final int count = 1000;
-        final int writeSize = 1000000;
-        final long chunkId = 0L;
+    public void testLogWriter() throws Exception {
+        final int count = 1000000;
+        final int writeSize = 1000;
+        final long logId = 0L;
+        final LogClientConfig config = LogClientConfig.builder()
+                .replicationFactor(3)
+                .clientThreadPoolSize(4)
+                .build();
+
         @Cleanup
-        val factory = new ClientConnectionFactory(4);
+        val factory = new ClientConnectionFactory(config.getClientThreadPoolSize());
         log.info("Created Client Factory");
         @Cleanup
-        val writer = new LogChunkReplicaWriterImpl(chunkId, LOCAL_URI, factory.getInternalExecutor());
+        val writer = new LogWriterImpl(logId, config, LOG_SERVER_MANAGER, factory);
         log.info("Created Writer");
-        val init = writer.initialize(factory);
+        val init = writer.initialize();
         init.join();
         log.info("Initialized Writer");
 
-        val entries = new ArrayList<PendingAddEntry>();
+        val futures = new ArrayList<CompletableFuture<EntryAddress>>();
         val latencies = Collections.synchronizedList(new ArrayList<Integer>());
         val rnd = new Random(0);
         val data = new byte[writeSize];
@@ -83,21 +102,136 @@ public class IntegrationTests {
         val timer = new Timer();
         for (int i = 0; i < count; i++) {
             val startTimeNanos = timer.getElapsedNanos();
-            val e = new PendingAddEntry(chunkId, i, i * i, Unpooled.wrappedBuffer(data));
-            writer.addEntry(e);
-            entries.add(e);
-            e.getCompletion().thenRun(() -> {
+            val f = writer.append(Unpooled.wrappedBuffer(data));
+            futures.add(f);
+            f.thenAccept(address -> {
                 val elapsed = timer.getElapsedNanos() - startTimeNanos;
                 latencies.add((int) (elapsed / AbstractTimer.NANOS_TO_MILLIS));
-                log.debug("    Entry {} acked.", e.getEntryId());
+                log.debug("    Entry {} acked.", address);
             });
-            e.getCompletion().join();//todo
+            // f.join(); // todo enable for latency test; disable for tput test
         }
 
         val writeSendTime = timer.getElapsedMillis();
         log.info("Wrote {} entries.", count);
 
-        val futures = entries.stream().map(PendingAddEntry::getCompletion).collect(Collectors.toList());
+        Futures.allOf(futures).join();
+        val writeAckTime = timer.getElapsedMillis();
+        log.info("All entries acked.");
+
+        if (latencies.size() > 0) {
+            val avgLatency = latencies.stream().mapToInt(i -> i).average().orElse(0);
+            val maxLatency = latencies.stream().mapToInt(i -> i).max().orElse(0);
+            latencies.sort(Integer::compareTo);
+            System.err.println(String.format("RESULT: WriteSend: %s ms, WriteAck: %s ms, L_avg: %.1f, L50: %s, L90: %s, L99: %s, L_max: %s",
+                    writeSendTime, writeAckTime, avgLatency,
+                    latencies.get(latencies.size() / 2),
+                    latencies.get((int) (latencies.size() * 0.9)),
+                    latencies.get((int) (latencies.size() * 0.99)),
+                    maxLatency));
+        }
+    }
+
+    @Test
+    public void testLogChunkWriter() throws Exception {
+        final int count = 1000;
+        final int writeSize = 1000000;
+        final int replicaCount = 3;
+        final long logId = 0L;
+        final long chunkId = 0L;
+
+        @Cleanup
+        val factory = new ClientConnectionFactory(4);
+        log.info("Created Client Factory");
+        @Cleanup
+        val writer = new LogChunkWriterImpl(logId, chunkId, replicaCount, LOG_SERVER_MANAGER, factory.getInternalExecutor());
+        log.info("Created Writer");
+        val init = writer.initialize(factory);
+        init.join();
+        log.info("Initialized Writer");
+
+        val futures = new ArrayList<CompletableFuture<Void>>();
+        val latencies = Collections.synchronizedList(new ArrayList<Integer>());
+        val rnd = new Random(0);
+        val data = new byte[writeSize];
+        rnd.nextBytes(data);
+        val timer = new Timer();
+        for (int i = 0; i < count; i++) {
+            val startTimeNanos = timer.getElapsedNanos();
+            val e = new PendingAddEntry(Unpooled.wrappedBuffer(data), i * i);
+            e.setWriter(writer);
+            e.setEntryId(i);
+            val f = writer.addEntry(e);
+            futures.add(f);
+            f.thenRun(() -> {
+                val elapsed = timer.getElapsedNanos() - startTimeNanos;
+                latencies.add((int) (elapsed / AbstractTimer.NANOS_TO_MILLIS));
+                log.debug("    Entry {} acked.", e.getEntryId());
+                e.close();
+            });
+            //f.join(); // todo enable for latency test; disable for tput test
+        }
+
+        val writeSendTime = timer.getElapsedMillis();
+        log.info("Wrote {} entries.", count);
+
+        Futures.allOf(futures).join();
+        val writeAckTime = timer.getElapsedMillis();
+        log.info("All entries acked.");
+
+        val avgLatency = latencies.stream().mapToInt(i -> i).average().getAsDouble();
+        val maxLatency = latencies.stream().mapToInt(i -> i).max().getAsInt();
+        latencies.sort(Integer::compareTo);
+        System.err.println(String.format("RESULT: WriteSend: %s ms, WriteAck: %s ms, L_avg: %.1f, L50: %s, L90: %s, L99: %s, L_max: %s",
+                writeSendTime, writeAckTime, avgLatency,
+                latencies.get(latencies.size() / 2),
+                latencies.get((int) (latencies.size() * 0.9)),
+                latencies.get((int) (latencies.size() * 0.99)),
+                maxLatency));
+
+    }
+
+    @Test
+    public void testLogChunkReplicaWriter() throws Exception {
+        final int count = 1000;
+        final int writeSize = 1000000;
+        final long logId = 0L;
+        final long chunkId = 0L;
+        @Cleanup
+        val factory = new ClientConnectionFactory(4);
+        log.info("Created Client Factory");
+        @Cleanup
+        val writer = new LogChunkReplicaWriterImpl(logId, chunkId, LOCAL_URI_1, factory.getInternalExecutor());
+        log.info("Created Writer");
+        val init = writer.initialize(factory);
+        init.join();
+        log.info("Initialized Writer");
+
+        val futures = new ArrayList<CompletableFuture<Void>>();
+        val latencies = Collections.synchronizedList(new ArrayList<Integer>());
+        val rnd = new Random(0);
+        val data = new byte[writeSize];
+        rnd.nextBytes(data);
+        val timer = new Timer();
+        for (int i = 0; i < count; i++) {
+            val startTimeNanos = timer.getElapsedNanos();
+            val e = new PendingAddEntry(Unpooled.wrappedBuffer(data), i * i);
+            e.setWriter(writer);
+            e.setEntryId(i);
+            val f = writer.addEntry(e);
+            futures.add(f);
+            f.thenRun(() -> {
+                val elapsed = timer.getElapsedNanos() - startTimeNanos;
+                latencies.add((int) (elapsed / AbstractTimer.NANOS_TO_MILLIS));
+                log.debug("    Entry {} acked.", e.getEntryId());
+                e.close();
+            });
+            f.join(); // todo
+        }
+
+        val writeSendTime = timer.getElapsedMillis();
+        log.info("Wrote {} entries.", count);
+
         Futures.allOf(futures).join();
         val writeAckTime = timer.getElapsedMillis();
         log.info("All entries acked.");

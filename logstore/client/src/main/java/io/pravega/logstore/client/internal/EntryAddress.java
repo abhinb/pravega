@@ -15,18 +15,10 @@
  */
 package io.pravega.logstore.client.internal;
 
-import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
-import java.util.concurrent.CompletableFuture;
+import lombok.Data;
 
-public interface LogChunkReplicaWriter extends AutoCloseable {
-    long getChunkId();
-
-    long getLastAckedEntryId();
-
-    CompletableFuture<Void> initialize(ClientConnectionFactory connectionFactory);
-
-    void addEntry(PendingAddEntry addEntry);
-
-    @Override
-    void close();
+@Data
+public class EntryAddress {
+    private final long chunkId;
+    private final long entryId;
 }
