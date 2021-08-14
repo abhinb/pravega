@@ -379,7 +379,8 @@ public class TestConfig {
         AppendProcessor(false),
         OutOfProcess(false),
         External(false),
-        BookKeeper(false);
+        BookKeeper(false),
+        LogStore(false);
         @Getter
         private final boolean tablesTest;
     }

@@ -690,6 +690,12 @@ project('test:integration') {
         // Workaround for intellij issue, since we cannot add both the compile dependency and the testRuntime
         // dependency of the client project into the compile scope of the integration tests
         compile files(project(':client').sourceSets.test.output)
+        compile project(':logstore:client')
+        compile project(':logstore:shared')
+        compile project(':logstore:server')
+        compile files(project(':logstore:server').sourceSets.main.output)
+        compile files(project(':logstore:shared').sourceSets.main.output)
+        compile files(project(':logstore:client').sourceSets.main.output)
     }
 
     task startServer(type: JavaExec) {

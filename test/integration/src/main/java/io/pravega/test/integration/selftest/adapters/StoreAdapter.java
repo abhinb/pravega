@@ -259,6 +259,9 @@ public abstract class StoreAdapter extends AbstractIdleService implements AutoCl
             case BookKeeper:
                 result = new BookKeeperAdapter(testConfig, builderConfig.getConfig(BookKeeperConfig::builder), executor);
                 break;
+            case LogStore:
+                result = new LogStoreAdapter(testConfig, executor);
+                break;
             default:
                 throw new UnsupportedOperationException("Cannot create a StoreAdapter for TestType " + testConfig.getTestType());
         }

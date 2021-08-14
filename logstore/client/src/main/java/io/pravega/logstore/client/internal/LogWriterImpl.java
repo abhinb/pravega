@@ -297,9 +297,11 @@ public class LogWriterImpl implements LogWriter {
         val activeChunk = this.activeChunk.get();
         if (activeChunk != null && activeChunk.writer.getLength() < this.config.getRolloverSizeBytes()) {
             // No need to rollover.
+            this.writeProcessor.runAsync();
             return CompletableFuture.completedFuture(null);
         }
 
+        log.info("{}: Rolling over.", this.traceLogId);
         return createNextChunk()
                 .thenAccept(newWriter -> {
                     val currentChunk = this.activeChunk.getAndSet(new ActiveChunk(newWriter));
@@ -317,6 +319,7 @@ public class LogWriterImpl implements LogWriter {
     }
 
     private CompletableFuture<LogChunkWriter> createNextChunk() {
+        log.debug("{}: Creating new chunk for log.", this.traceLogId);
         val result = new AtomicReference<LogChunkWriter>(null);
         return Futures.loop(
                 () -> result.get() == null,
@@ -328,6 +331,7 @@ public class LogWriterImpl implements LogWriter {
                                 if (ex == null) {
                                     // Found one.
                                     result.set(w);
+                                    log.info("{}: Created new chunk {}.", this.traceLogId, w.getChunkId());
                                 } else {
                                     w.close();
                                     ex = Exceptions.unwrap(ex);

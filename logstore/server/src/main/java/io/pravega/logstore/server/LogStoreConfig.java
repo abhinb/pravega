@@ -29,7 +29,7 @@ public class LogStoreConfig {
     public static final Property<String> LISTENING_IP_ADDRESS = Property.named("service.listener.host.nameOrIp", "");
     public static final Property<Integer> LISTENING_PORT = Property.named("service.listener.port", 12345);
 
-    public static final Property<String> STORAGE_PATH = Property.named("storage.path", "/tmp/logstore");
+    public static final Property<String> STORAGE_PATH = Property.named("storage.path", "/tmp/pravega/logstore");
     public static final Property<Integer> CORE_POOL_SIZE = Property.named("threadpool.core.size", 4);
     public static final Property<Integer> WRITE_POOL_SIZE = Property.named("threadpool.write.size", 16);
     public static final Property<Integer> READ_POOL_SIZE = Property.named("threadpool.read.size", 16);

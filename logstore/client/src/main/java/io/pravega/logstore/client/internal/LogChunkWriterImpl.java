@@ -83,19 +83,17 @@ public class LogChunkWriterImpl implements LogChunkWriter {
 
     @Override
     public CompletableFuture<Void> addEntry(Entry entry) {
+        this.length.addAndGet(entry.getLength());
         val futures = new ArrayList<CompletableFuture<Void>>(this.replicaWriters.size());
         for (val w : this.replicaWriters) {
             futures.add(w.addEntry(new PendingReplicaEntry(entry)));
         }
 
         val result = Futures.allOf(futures);
-        result.whenComplete((r, ex) -> {
-            if (ex == null) {
-                this.length.addAndGet(entry.getLength());
-            } else {
-                log.error("{}: addEntry failure. Closing.", this.traceLogId, ex);
-                close();
-            }
+        result.exceptionally(ex -> {
+            log.error("{}: addEntry failure. Closing.", this.traceLogId, ex);
+            close();
+            return null;
         });
         return result;
     }

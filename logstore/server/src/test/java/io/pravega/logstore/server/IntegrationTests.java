@@ -19,12 +19,12 @@ import io.netty.buffer.Unpooled;
 import io.pravega.common.AbstractTimer;
 import io.pravega.common.Timer;
 import io.pravega.common.concurrent.Futures;
+import io.pravega.logstore.client.LogClient;
 import io.pravega.logstore.client.LogClientConfig;
 import io.pravega.logstore.client.internal.EntryAddress;
 import io.pravega.logstore.client.internal.LogChunkReplicaWriterImpl;
 import io.pravega.logstore.client.internal.LogChunkWriterImpl;
 import io.pravega.logstore.client.internal.LogServerManager;
-import io.pravega.logstore.client.internal.LogWriterImpl;
 import io.pravega.logstore.client.internal.PendingAddEntry;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import io.pravega.logstore.server.service.ApplicationConfig;
@@ -45,9 +45,9 @@ import org.junit.Test;
 
 @Slf4j
 public class IntegrationTests {
-    private static final URI LOCAL_URI_1 = URI.create("tcp://127.0.0.1:12345");
-    private static final URI LOCAL_URI_2 = URI.create("tcp://127.0.0.1:12346");
-    private static final URI LOCAL_URI_3 = URI.create("tcp://127.0.0.1:12347");
+    private static final URI LOCAL_URI_1 = URI.create("tcp://127.0.1.1:12345");
+    private static final URI LOCAL_URI_2 = URI.create("tcp://127.0.1.1:12346");
+    private static final URI LOCAL_URI_3 = URI.create("tcp://127.0.1.1:12347");
     private static final LogServerManager LOG_SERVER_MANAGER = new LogServerManager(
             Arrays.asList(LOCAL_URI_1, LOCAL_URI_2, LOCAL_URI_3));
 
@@ -76,19 +76,19 @@ public class IntegrationTests {
 
     @Test
     public void testLogWriter() throws Exception {
-        final int count = 1000000;
-        final int writeSize = 1000;
+        final int count = 200;
+        final int writeSize = 1000000;
         final long logId = 0L;
         final LogClientConfig config = LogClientConfig.builder()
-                .replicationFactor(3)
+                .replicationFactor(1)
                 .clientThreadPoolSize(4)
+                .rolloverSizeBytes(10 * 1024 * 1024)
                 .build();
-
         @Cleanup
-        val factory = new ClientConnectionFactory(config.getClientThreadPoolSize());
-        log.info("Created Client Factory");
+        val client = new LogClient(config, LOG_SERVER_MANAGER);
+        log.info("Created Client");
         @Cleanup
-        val writer = new LogWriterImpl(logId, config, LOG_SERVER_MANAGER, factory);
+        val writer = client.createLogWriter(logId);
         log.info("Created Writer");
         val init = writer.initialize();
         init.join();
@@ -109,7 +109,7 @@ public class IntegrationTests {
                 latencies.add((int) (elapsed / AbstractTimer.NANOS_TO_MILLIS));
                 log.debug("    Entry {} acked.", address);
             });
-            // f.join(); // todo enable for latency test; disable for tput test
+            f.join(); // todo enable for latency test; disable for tput test
         }
 
         val writeSendTime = timer.getElapsedMillis();
