@@ -39,6 +39,7 @@ import java.util.stream.Collectors;
 import lombok.Cleanup;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
+import org.apache.curator.test.TestingServer;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -50,11 +51,22 @@ public class IntegrationTests {
     private static final URI LOCAL_URI_3 = URI.create("tcp://127.0.1.1:12347");
     private static final LogServerManager LOG_SERVER_MANAGER = new LogServerManager(
             Arrays.asList(LOCAL_URI_1, LOCAL_URI_2, LOCAL_URI_3));
+    private static final int ZK_PORT = 2181;
+    private static final LogClientConfig CLIENT_CONFIG = LogClientConfig.builder()
+            .replicationFactor(1)
+            .clientThreadPoolSize(4)
+            .rolloverSizeBytes(10 * 1024 * 1024)
+            .zkURL("localhost:" + ZK_PORT)
+
+            .build();
 
     private List<LogStoreServiceStarter> services;
+    private TestingServer zkServer;
 
     @Before
-    public void setup() {
+    public void setup() throws Exception {
+        this.zkServer = new TestingServer(ZK_PORT, true);
+        log.info("ZK Server started at port {}.", ZK_PORT);
         this.services = LOG_SERVER_MANAGER.getServerUris().stream()
                 .map(uri -> {
                     val appConfig = ApplicationConfig.builder()
@@ -67,11 +79,16 @@ public class IntegrationTests {
                 })
                 .collect(Collectors.toList());
         this.services.forEach(LogStoreServiceStarter::start);
+        log.info("All Services Started.");
     }
 
     @After
-    public void tearDown() {
+    public void tearDown() throws Exception {
         this.services.forEach(LogStoreServiceStarter::shutdown);
+        if (this.zkServer != null) {
+            this.zkServer.stop();
+            this.zkServer.close();
+        }
     }
 
     @Test
@@ -79,13 +96,8 @@ public class IntegrationTests {
         final int count = 200;
         final int writeSize = 1000000;
         final long logId = 0L;
-        final LogClientConfig config = LogClientConfig.builder()
-                .replicationFactor(1)
-                .clientThreadPoolSize(4)
-                .rolloverSizeBytes(10 * 1024 * 1024)
-                .build();
         @Cleanup
-        val client = new LogClient(config, LOG_SERVER_MANAGER);
+        val client = new LogClient(CLIENT_CONFIG, LOG_SERVER_MANAGER);
         log.info("Created Client");
         @Cleanup
         val writer = client.createLogWriter(logId);

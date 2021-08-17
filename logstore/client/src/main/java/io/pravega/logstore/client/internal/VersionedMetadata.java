@@ -15,26 +15,24 @@
  */
 package io.pravega.logstore.client.internal;
 
-import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
-import java.net.URI;
-import java.util.Collection;
-import java.util.concurrent.CompletableFuture;
+import io.pravega.common.util.BufferView;
+import java.io.IOException;
+import lombok.Getter;
+import lombok.Setter;
 
-public interface LogChunkWriter extends AutoCloseable {
-    long getChunkId();
+abstract class VersionedMetadata {
+    @Getter
+    @Setter
+    private volatile int version = -1;
 
-    long getLastAckedEntryId();
 
-    long getLength();
+    @FunctionalInterface
+    interface Deserializer<R> {
+        R apply(byte[] var1) throws IOException;
+    }
 
-    boolean isSealed();
-
-    Collection<URI> getReplicaURIs();
-
-    CompletableFuture<Void> initialize(ClientConnectionFactory connectionFactory);
-
-    CompletableFuture<Void> addEntry(Entry entry);
-
-    @Override
-    void close();
+    @FunctionalInterface
+    interface Serializer<R> {
+        BufferView apply(R var1) throws IOException;
+    }
 }

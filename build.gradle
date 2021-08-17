@@ -436,6 +436,7 @@ project('logstore:client') {
         compile project(':common')
         compile project(':common_server')
         compile project(':logstore:shared')
+        compile group: 'org.apache.curator', name: 'curator-framework', version: apacheCuratorVersion
         compile group: 'com.google.guava', name: 'guava', version: guavaVersion
         compile group: 'ch.qos.logback', name: 'logback-classic', version: qosLogbackVersion
         compile "io.netty:netty-transport-native-epoll:" + nettyVersion

@@ -18,14 +18,23 @@ package io.pravega.logstore.client.internal;
 import com.google.common.base.Preconditions;
 import io.netty.buffer.ByteBuf;
 import io.pravega.common.Exceptions;
+import io.pravega.common.ObjectBuilder;
 import io.pravega.common.ObjectClosedException;
 import io.pravega.common.concurrent.Futures;
+import io.pravega.common.io.serialization.RevisionDataInput;
+import io.pravega.common.io.serialization.RevisionDataOutput;
+import io.pravega.common.io.serialization.VersionedSerializer;
 import io.pravega.common.util.RetriesExhaustedException;
 import io.pravega.common.util.Retry;
 import io.pravega.logstore.client.LogClientConfig;
 import io.pravega.logstore.client.LogWriter;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import io.pravega.logstore.shared.LogChunkExistsException;
+import java.io.IOException;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -33,6 +42,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import lombok.Builder;
+import lombok.Data;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -45,27 +56,31 @@ public class LogWriterImpl implements LogWriter {
     private final long logId;
     private final LogClientConfig config;
     private final LogServerManager logServerManager;
+    private final MetadataManager metadataManager;
     private final ClientConnectionFactory connectionFactory;
     private final String traceLogId;
     private final AtomicReference<ActiveChunk> activeChunk;
     private final WriteQueue writeQueue;
     private final SequentialAsyncProcessor writeProcessor;
     private final AtomicBoolean closed;
-    private final AtomicLong nextChunkId;
+    private final AtomicReference<LogMetadata> metadata;
+    private final String zkPath;
 
     public LogWriterImpl(long logId, @NonNull LogClientConfig config, @NonNull LogServerManager logServerManager,
-                         @NonNull ClientConnectionFactory connectionFactory) {
+                         @NonNull MetadataManager metadataManager, @NonNull ClientConnectionFactory connectionFactory) {
         this.logId = logId;
         this.config = config;
+        this.metadataManager = metadataManager;
         this.logServerManager = logServerManager;
         this.connectionFactory = connectionFactory;
         this.activeChunk = new AtomicReference<>(null);
+        this.metadata = new AtomicReference<>();
         this.writeQueue = new WriteQueue();
         val retry = createRetryPolicy(this.config.getMaxWriteAttempts(), this.config.getWriteTimeoutMillis());
         this.writeProcessor = new SequentialAsyncProcessor(this::processWritesSync, retry, this::handleWriteProcessorFailures, getExecutor());
         this.closed = new AtomicBoolean(false);
+        this.zkPath = String.format("/%s/%s", LogMetadata.ZK_PATH, logId);
         this.traceLogId = String.format("LogWriter[%s]", this.logId);
-        this.nextChunkId = new AtomicLong(0L);
     }
 
     @Override
@@ -84,6 +99,8 @@ public class LogWriterImpl implements LogWriter {
     @Override
     public CompletableFuture<Void> initialize() {
         // 0. (not done yet) Get all existing chunks and seal/fence them.
+        this.metadata.set(this.metadataManager.get(this.zkPath, LogMetadata.SERIALIZER::deserialize, new LogMetadata(Collections.emptyList())));
+
         // 1. Create new chunk.
         return rollover();
     }
@@ -207,7 +224,7 @@ public class LogWriterImpl implements LogWriter {
                 }
 
                 // Invoke the BookKeeper write.
-                assert entry.getChunkWriter() == activeChunk.writer;
+                assert entry.getChunkWriter() == activeChunk.writer : String.format("E.W=%s, A.W=%s", entry.getChunkWriter(), activeChunk.writer);
 
                 entry.setEntryId(activeChunk.nextEntryId.getAndIncrement());
                 activeChunk.writer.addEntry(entry)
@@ -324,18 +341,29 @@ public class LogWriterImpl implements LogWriter {
         return Futures.loop(
                 () -> result.get() == null,
                 () -> {
-                    val chunkId = this.nextChunkId.getAndIncrement();
+                    val chunkId = this.metadataManager.getNextChunkId();
                     val w = new LogChunkWriterImpl(getLogId(), chunkId, this.config.getReplicationFactor(), this.logServerManager, getExecutor());
                     return w.initialize(this.connectionFactory)
                             .handle((r, ex) -> {
                                 if (ex == null) {
                                     // Found one.
                                     result.set(w);
-                                    log.info("{}: Created new chunk {}.", this.traceLogId, w.getChunkId());
+                                    val serverURIs = w.getReplicaURIs();
+                                    log.info("{}: Created chunk {} on servers {}.", this.traceLogId, w.getChunkId(), serverURIs);
+
+                                    // Persist metadata in ZK
+                                    val m = this.metadata.get().addChunk(w.getChunkId(), serverURIs);
+                                    if (this.metadataManager.set(m, this.zkPath, LogMetadata.SERIALIZER::serialize)) {
+                                        this.metadata.set(m);
+                                    } else {
+                                        throw new CompletionException(new Exception("Unable to persist metadata in ZK."));
+                                    }
                                 } else {
                                     w.close();
                                     ex = Exceptions.unwrap(ex);
-                                    if (!(ex instanceof LogChunkExistsException)) {
+                                    if (ex instanceof LogChunkExistsException) {
+                                        log.warn("{}: Chunk {} already exists on server but not in ZK. Skipping.", this.traceLogId, chunkId);
+                                    } else {
                                         // some other exception.
                                         throw new CompletionException(ex);
                                     }
@@ -393,9 +421,73 @@ public class LogWriterImpl implements LogWriter {
         return this.connectionFactory.getInternalExecutor();
     }
 
+
     @RequiredArgsConstructor
     private static class ActiveChunk {
         final LogChunkWriter writer;
         private final AtomicLong nextEntryId = new AtomicLong(0);
+    }
+
+    @Data
+    private static class ChunkMetadata {
+        private final long chunkId;
+        private final Collection<URI> locations;
+    }
+
+    @Getter
+    @Builder
+    private static class LogMetadata extends VersionedMetadata {
+        static final String ZK_PATH = "LogMetadata";
+        private static final Serializer SERIALIZER = new Serializer();
+        private final List<ChunkMetadata> chunks;
+
+        LogMetadata addChunk(long chunkId, Collection<URI> locations) {
+            val newChunks = new ArrayList<>(this.chunks);
+            newChunks.add(new ChunkMetadata(chunkId, locations));
+            val result = new LogMetadata(newChunks);
+            result.setVersion(this.getVersion());
+            return result;
+        }
+
+
+        public static class LogMetadataBuilder implements ObjectBuilder<LogMetadata> {
+
+        }
+
+        private static class Serializer extends VersionedSerializer.WithBuilder<LogMetadata, LogMetadataBuilder> {
+            @Override
+            protected LogMetadataBuilder newBuilder() {
+                return builder();
+            }
+
+            @Override
+            protected byte getWriteVersion() {
+                return 0;
+            }
+
+            @Override
+            protected void declareVersions() {
+                version(0).revision(0, this::write00, this::read00);
+            }
+
+            private void write00(LogMetadata e, RevisionDataOutput target) throws IOException {
+                target.writeCollection(e.chunks, this::writeChunk00);
+            }
+
+            private void read00(RevisionDataInput source, LogMetadataBuilder b) throws IOException {
+                b.chunks(source.readCollection(this::readChunk00, ArrayList::new));
+            }
+
+            private void writeChunk00(RevisionDataOutput target, ChunkMetadata c) throws IOException {
+                target.writeLong(c.chunkId);
+                target.writeCollection(c.locations, (t, uri) -> t.writeUTF(uri.toString()));
+            }
+
+            private ChunkMetadata readChunk00(RevisionDataInput source) throws IOException {
+                val chunkId = source.readLong();
+                val locations = source.readCollection(s -> URI.create(s.readUTF()), ArrayList::new);
+                return new ChunkMetadata(chunkId, locations);
+            }
+        }
     }
 }

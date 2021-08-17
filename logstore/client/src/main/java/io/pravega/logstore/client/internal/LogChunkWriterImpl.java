@@ -18,7 +18,9 @@ package io.pravega.logstore.client.internal;
 import io.netty.buffer.ByteBuf;
 import io.pravega.common.concurrent.Futures;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
+import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -62,6 +64,14 @@ public class LogChunkWriterImpl implements LogChunkWriter {
     @Override
     public boolean isSealed() {
         return this.replicaWriters.stream().anyMatch(LogChunkWriter::isSealed);
+    }
+
+    @Override
+    public Collection<URI> getReplicaURIs() {
+        return this.replicaWriters.stream()
+                .map(LogChunkWriter::getReplicaURIs)
+                .flatMap(Collection::stream)
+                .collect(Collectors.toList());
     }
 
     @Override

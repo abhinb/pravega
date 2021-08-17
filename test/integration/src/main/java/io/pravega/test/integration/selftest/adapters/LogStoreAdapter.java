@@ -47,6 +47,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import lombok.SneakyThrows;
 import lombok.val;
+import org.apache.curator.test.TestingServer;
 
 public class LogStoreAdapter extends StoreAdapter {
     //region Members
@@ -54,6 +55,7 @@ public class LogStoreAdapter extends StoreAdapter {
     private final TestConfig testConfig;
     private final ScheduledExecutorService executor;
     private final ConcurrentHashMap<String, LogWriter> writers;
+    private final TestingServer zkServer;
     private final Thread stopServerProcess;
     private Process serverProcess;
     private final LogClient logClient;
@@ -63,6 +65,7 @@ public class LogStoreAdapter extends StoreAdapter {
 
     //region Constructor
 
+    @SneakyThrows
     LogStoreAdapter(TestConfig testConfig, ScheduledExecutorService executor) {
         this.testConfig = Preconditions.checkNotNull(testConfig, "testConfig");
         this.executor = Preconditions.checkNotNull(executor, "executor");
@@ -74,7 +77,9 @@ public class LogStoreAdapter extends StoreAdapter {
         val clientConfig = LogClientConfig.builder()
                 .replicationFactor(1)
                 .clientThreadPoolSize(10)
+                .zkURL("localhost:"+testConfig.getZkPort())
                 .build();
+        this.zkServer = new TestingServer(testConfig.getZkPort());
         this.logClient = new LogClient(clientConfig, Collections.singletonList(this.serverURI));
     }
 
@@ -90,15 +95,21 @@ public class LogStoreAdapter extends StoreAdapter {
 
     @Override
     protected void startUp() throws Exception {
-        // Start BookKeeper.
+        // Start ZK.
+        this.zkServer.start();
+
+        // Start LogStore.
         this.serverProcess = startServer(this.testConfig, this.serverURI, "test");
     }
 
     @Override
+    @SneakyThrows
     protected void shutDown() {
         this.writers.values().forEach(LogWriter::close);
         this.writers.clear();
         this.logClient.close();
+        this.zkServer.stop();
+        this.zkServer.close();
         stopServer();
         Runtime.getRuntime().removeShutdownHook(this.stopServerProcess);
         this.stopServerProcess.interrupt();

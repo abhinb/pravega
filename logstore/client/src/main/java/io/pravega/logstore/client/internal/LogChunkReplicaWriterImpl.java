@@ -36,6 +36,8 @@ import io.pravega.logstore.shared.protocol.commands.Hello;
 import java.net.URI;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -106,6 +108,11 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
     @Override
     public boolean isSealed() {
         return this.state.isClosed();
+    }
+
+    @Override
+    public Collection<URI> getReplicaURIs() {
+        return Collections.singleton(this.logStoreUri);
     }
 
     @SneakyThrows

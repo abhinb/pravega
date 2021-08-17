@@ -31,4 +31,14 @@ public class LogClientConfig {
     private final int writeTimeoutMillis = 30_000;
     @Builder.Default
     private final int clientThreadPoolSize = 4;
+    @Builder.Default
+    private final String zkURL = "localhost:2181";
+    @Builder.Default
+    private final String zkPath = "pravega/logstore";
+    @Builder.Default
+    private final int zkRetrySleepMillis = 5000;
+    @Builder.Default
+    private final int zkRetryCount = 10;
+    @Builder.Default
+    private final int zkSessionTimeoutMillis = 10000;
 }
