@@ -70,7 +70,7 @@ public class TestConfig {
     static final Property<String> CONTROLLER_HOST = Property.named("controllerHost", LOCALHOST);
     static final Property<Integer> CONTROLLER_BASE_PORT = Property.named("controllerPort", 9200);
     static final Property<Boolean> PAUSE_BEFORE_EXIT = Property.named("pauseBeforeExit", false);
-    static final Property<String> BOOKIE_LEDGERS_DIR = Property.named("bkLedgersDir", "");
+    static final Property<String> BOOKIE_LEDGERS_DIR = Property.named("bkLedgersDir", "/media/andrei/data/bkledgers");
     static final Property<String> STORAGE_DIR = Property.named("storageDir", TMP_DIR + "/pravega/storage");
     static final Property<Boolean> CHUNKED_SEGMENT_STORAGE_ENABLED = Property.named("useChunkedSegmentStorage", true);
     private static final Property<Integer> ZK_PORT = Property.named("zkPort", 9000);

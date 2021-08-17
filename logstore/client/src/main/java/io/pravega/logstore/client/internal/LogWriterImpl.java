@@ -77,7 +77,7 @@ public class LogWriterImpl implements LogWriter {
                 activeWriter.writer.close();
             }
 
-            this.writeQueue.close().forEach(w -> w.fail(new ObjectClosedException("BookKeeperLog has been closed."), true));
+            this.writeQueue.close().forEach(w -> w.fail(new ObjectClosedException(this), true));
         }
     }
 

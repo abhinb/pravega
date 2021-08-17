@@ -73,6 +73,7 @@ public class LogStoreAdapter extends StoreAdapter {
         Runtime.getRuntime().addShutdownHook(this.stopServerProcess);
         val clientConfig = LogClientConfig.builder()
                 .replicationFactor(1)
+                .clientThreadPoolSize(10)
                 .build();
         this.logClient = new LogClient(clientConfig, Collections.singletonList(this.serverURI));
     }
