@@ -506,6 +506,7 @@ project('segmentstore:storage:impl') {
         compile project(':common')
         compile project(':segmentstore:storage')
         compile project(':shared:metrics')
+        compile project(':logstore:client')
         compile group: 'org.apache.curator', name: 'curator-framework', version: apacheCuratorVersion
         compile group: 'org.apache.bookkeeper', name: 'bookkeeper-server', version: bookKeeperVersion, withoutLogger
         testCompile project(':test:testcommon')

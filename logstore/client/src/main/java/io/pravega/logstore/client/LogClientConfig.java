@@ -21,8 +21,11 @@ import lombok.Data;
 @Data
 @Builder
 public class LogClientConfig {
+    public static final int DEFAULT_MAX_WRITE_SIZE_BYTES = 1024 * 1024 - 1024;
     @Builder.Default
     private final int replicationFactor = 3;
+    @Builder.Default
+    private final int maxWriteSizeBytes = DEFAULT_MAX_WRITE_SIZE_BYTES;
     @Builder.Default
     private final long rolloverSizeBytes = 1024 * 1024 * 1024;
     @Builder.Default

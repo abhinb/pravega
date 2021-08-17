@@ -35,8 +35,7 @@ public class PendingAddEntry implements Entry, AutoCloseable {
     private final AtomicInteger attemptCount;
     private final AtomicReference<Timer> beginAttemptTimer;
     private final AtomicReference<Throwable> failureCause;
-    private volatile LogChunkWriter chunkWriter;
-    @Setter
+    private volatile WriteChunk writeChunk;
     private volatile long entryId;
     @Setter
     private volatile long startTime;
@@ -49,17 +48,13 @@ public class PendingAddEntry implements Entry, AutoCloseable {
         this.failureCause = new AtomicReference<>();
         this.length = data.readableBytes();
         this.completion = new CompletableFuture<>();
-        setWriter(null);
+        this.writeChunk = null;
+        this.entryId = Long.MIN_VALUE;
     }
 
-    @Override
-    public long getChunkId() {
-        return this.chunkWriter.getChunkId();
-    }
-
-    public void setWriter(LogChunkWriter logChunk) {
-        this.chunkWriter = logChunk;
-        setEntryId(Long.MIN_VALUE);
+    public void setWriter(WriteChunk wc) {
+        this.writeChunk = wc;
+        this.entryId = wc.getNextEntryId();
     }
 
     /**
@@ -129,8 +124,8 @@ public class PendingAddEntry implements Entry, AutoCloseable {
         }
 
         endAttempt();
-        LogChunkWriter chunk = this.chunkWriter;
-        if (chunk != null && chunk.isSealed()) {
+        WriteChunk chunk = this.writeChunk;
+        if (chunk != null && chunk.isRolledOver()) {
             // Rollovers aren't really failures (they're caused by us). In that case, do not count this failure as an attempt.
             this.attemptCount.updateAndGet(v -> Math.max(0, v - 1));
         }
@@ -142,12 +137,17 @@ public class PendingAddEntry implements Entry, AutoCloseable {
 
     @Override
     public String toString() {
-        return String.format("LogChunkId=%s, EntryId=%s, Crc=%s, Length=%s, Status=%s", this.chunkWriter, this.entryId, this.crc32,
+        return String.format("LogChunkId=%s, EntryId=%s, Crc=%s, Length=%s, Status=%s", this.writeChunk, this.entryId, this.crc32,
                 this.length, this.completion.isDone() ? (this.completion.isCompletedExceptionally() ? "Error" : "Done") : "Pending");
     }
 
     @Override
     public void close() {
         this.data.release();
+    }
+
+    @Override
+    public EntryAddress getAddress() {
+        return new EntryAddress(this.writeChunk.getWriter().getChunkId(), getEntryId());
     }
 }

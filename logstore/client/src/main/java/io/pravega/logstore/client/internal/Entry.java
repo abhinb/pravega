@@ -18,9 +18,7 @@ package io.pravega.logstore.client.internal;
 import io.netty.buffer.ByteBuf;
 
 public interface Entry {
-    long getChunkId();
-
-    long getEntryId();
+    EntryAddress getAddress();
 
     int getCrc32();
 

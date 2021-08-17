@@ -116,15 +116,13 @@ public class LogChunkWriterImpl implements LogChunkWriter {
 
     @Getter
     private static class PendingReplicaEntry implements Entry {
-        private final long chunkId;
-        private final long entryId;
+        private final EntryAddress address;
         private final int crc32;
         private final int length;
         private final ByteBuf data;
 
         PendingReplicaEntry(Entry base) {
-            this.chunkId = base.getChunkId();
-            this.entryId = base.getEntryId();
+            this.address = base.getAddress();
             this.crc32 = base.getCrc32();
             this.length = base.getLength();
             this.data = base.getData().slice();

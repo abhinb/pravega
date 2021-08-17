@@ -21,7 +21,7 @@ import io.pravega.logstore.client.internal.LogWriterImpl;
 import io.pravega.logstore.client.internal.MetadataManager;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import java.net.URI;
-import java.util.List;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.NonNull;
 import org.apache.curator.framework.CuratorFramework;
@@ -36,7 +36,7 @@ public class LogClient implements AutoCloseable {
     private final LogClientConfig config;
     private final AtomicBoolean closed;
 
-    public LogClient(@NonNull LogClientConfig config, @NonNull List<URI> serverURIs) {
+    public LogClient(@NonNull LogClientConfig config, @NonNull Collection<URI> serverURIs) {
         this(config, new LogServerManager(serverURIs));
     }
 

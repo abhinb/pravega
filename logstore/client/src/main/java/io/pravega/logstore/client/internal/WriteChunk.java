@@ -13,24 +13,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.logstore.client;
+package io.pravega.logstore.client.internal;
 
-import io.netty.buffer.ByteBuf;
-import io.pravega.logstore.client.internal.EntryAddress;
-import java.util.concurrent.CompletableFuture;
-import lombok.NonNull;
+import java.util.concurrent.atomic.AtomicLong;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
 
-public interface LogWriter extends AutoCloseable {
-    long getLogId();
+@RequiredArgsConstructor
+@Getter
+public class WriteChunk {
+    private final LogChunkWriter writer;
+    private volatile boolean rolledOver;
+    private final AtomicLong nextEntryId = new AtomicLong(0);
 
-    LogInfo getInfo();
+    void markRolledOver() {
+        this.rolledOver = true;
+        this.writer.close();
+    }
 
-    CompletableFuture<Void> initialize();
-
-    CompletableFuture<EntryAddress> append(@NonNull ByteBuf data);
-
-    QueueStatistics getQueueStatistics();
-
-    @Override
-    void close();
+    long getNextEntryId() {
+        return this.nextEntryId.getAndIncrement();
+    }
 }

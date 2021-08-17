@@ -15,22 +15,11 @@
  */
 package io.pravega.logstore.client;
 
-import io.netty.buffer.ByteBuf;
-import io.pravega.logstore.client.internal.EntryAddress;
-import java.util.concurrent.CompletableFuture;
-import lombok.NonNull;
+import lombok.Data;
 
-public interface LogWriter extends AutoCloseable {
-    long getLogId();
-
-    LogInfo getInfo();
-
-    CompletableFuture<Void> initialize();
-
-    CompletableFuture<EntryAddress> append(@NonNull ByteBuf data);
-
-    QueueStatistics getQueueStatistics();
-
-    @Override
-    void close();
+@Data
+public final class LogInfo {
+    private final long logId;
+    private final int chunkCount;
+    private final long epoch;
 }

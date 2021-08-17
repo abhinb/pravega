@@ -17,12 +17,16 @@ package io.pravega.logstore.client.internal;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
+import io.pravega.common.AbstractTimer;
 import io.pravega.common.Exceptions;
+import io.pravega.logstore.client.LogClientConfig;
+import io.pravega.logstore.client.QueueStatistics;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
@@ -42,6 +46,7 @@ class WriteQueue {
     private long totalLength;
     @GuardedBy("this")
     private boolean closed;
+    private final AtomicReference<QueueStatistics> stats;
 
     //endregion
 
@@ -51,7 +56,7 @@ class WriteQueue {
      * Creates a new instance of the WriteQueue class.
      */
     WriteQueue() {
-        this(System::nanoTime);
+        this(System::nanoTime, LogClientConfig.DEFAULT_MAX_WRITE_SIZE_BYTES);
     }
 
     /**
@@ -60,14 +65,31 @@ class WriteQueue {
      * @param timeSupplier A Supplier that returns the current time, in nanoseconds.
      */
     @VisibleForTesting
-    WriteQueue(Supplier<Long> timeSupplier) {
+    WriteQueue(Supplier<Long> timeSupplier, int maxWriteSizeBytes) {
         this.timeSupplier = Preconditions.checkNotNull(timeSupplier, "timeSupplier");
         this.writes = new ArrayDeque<>();
+        this.stats = new AtomicReference<>(new QueueStatistics(0, 0, maxWriteSizeBytes, 0));
     }
 
     //endregion
 
     //region Queue Operations
+    QueueStatistics getStatistics() {
+        return this.stats.get();
+    }
+
+    @GuardedBy("this")
+    private void updateStats(long lastDurationMillis) {
+        if (lastDurationMillis == 0 && this.writes.size() > 0) {
+            // We get in here when this method is invoked prior to any operation being completed. Since lastDurationMillis
+            // is only set when an item is completed, in this special case we just estimate based on the amount of time
+            // the first item in the queue has been added.
+            lastDurationMillis = (int) ((this.timeSupplier.get() - this.writes.peekFirst().getStartTime()) / AbstractTimer.NANOS_TO_MILLIS);
+        }
+
+        int maxWriteSizeBytes = this.stats.get().getMaxWriteLength();
+        this.stats.set(new QueueStatistics(this.writes.size(), this.totalLength, maxWriteSizeBytes, (int) lastDurationMillis));
+    }
 
     /**
      * Adds a new Write to the end of the queue.
@@ -112,7 +134,7 @@ class WriteQueue {
 
         // Collect all remaining writes, as long as they are not currently in-progress and have the same ledger id
         // as the first item in the ledger.
-        long firstLedgerId = this.writes.peekFirst().getChunkWriter().getChunkId();
+        long firstChunkId = this.writes.peekFirst().getWriteChunk().getWriter().getChunkId();
         boolean canSkip = true;
 
         List<PendingAddEntry> result = new ArrayList<>();
@@ -133,7 +155,7 @@ class WriteQueue {
                     // with their updating their status. Try again next time (when that write completes).
                     return Collections.emptyList();
                 }
-            } else if (write.getChunkWriter().getChunkId() != firstLedgerId) {
+            } else if (write.getWriteChunk().getWriter().getChunkId() != firstChunkId) {
                 // We cannot initiate writes in a new ledger until all writes in the previous ledger completed.
                 break;
             } else if (!write.isDone()) {
@@ -166,6 +188,9 @@ class WriteQueue {
             totalElapsed += currentTime - w.getStartTime();
             failedWrite |= w.getFailureCause() != null;
         }
+
+        long lastDurationMillis = removedCount == 0 ? 0 : (int) (totalElapsed / removedCount / AbstractTimer.NANOS_TO_MILLIS);
+        updateStats(lastDurationMillis);
 
         CleanupStatus status = failedWrite
                 ? CleanupStatus.WriteFailed

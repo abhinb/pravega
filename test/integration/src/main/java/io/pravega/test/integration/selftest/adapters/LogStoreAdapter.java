@@ -77,7 +77,7 @@ public class LogStoreAdapter extends StoreAdapter {
         val clientConfig = LogClientConfig.builder()
                 .replicationFactor(1)
                 .clientThreadPoolSize(10)
-                .zkURL("localhost:"+testConfig.getZkPort())
+                .zkURL("localhost:" + testConfig.getZkPort())
                 .build();
         this.zkServer = new TestingServer(testConfig.getZkPort());
         this.logClient = new LogClient(clientConfig, Collections.singletonList(this.serverURI));

@@ -125,12 +125,12 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
     public CompletableFuture<Void> addEntry(Entry entry) {
         Exceptions.checkNotClosed(this.state.isClosed(), this);
         Preconditions.checkState(this.state.isInitialized(), "Not initialized.");
-        Preconditions.checkArgument(entry.getChunkId() == this.chunkId);
+        Preconditions.checkArgument(entry.getAddress().getChunkId() == this.chunkId);
 
         synchronized (writeOrderLock) {
             try {
                 val connection = this.connection;
-                val ae = new AppendEntry(entry.getChunkId(), entry.getEntryId(), entry.getCrc32(), entry.getData());
+                val ae = new AppendEntry(entry.getAddress().getChunkId(), entry.getAddress().getEntryId(), entry.getCrc32(), entry.getData());
                 log.trace("{}: Sending AppendEntry: {}", this, ae);
                 connection.send(ae);
                 return state.addPending(entry);
@@ -228,8 +228,8 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
         private CompletableFuture<Void> addPending(Entry entry) {
             val pe = new PendingChunkReplicaEntry(entry);
             synchronized (lock) {
-                Preconditions.checkArgument(entry.getEntryId() == this.nextExpectedEntryId,
-                        "Unexpected EntryId. Expected %s, given %s.", this.nextExpectedEntryId, entry.getEntryId());
+                Preconditions.checkArgument(entry.getAddress().getEntryId() == this.nextExpectedEntryId,
+                        "Unexpected EntryId. Expected %s, given %s.", this.nextExpectedEntryId, entry.getAddress().getEntryId());
                 log.trace("{}: Adding {} to inflight.", traceLogId, entry);
                 pending.addLast(pe);
                 this.nextExpectedEntryId++;
@@ -244,7 +244,7 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
             synchronized (lock) {
                 List<PendingChunkReplicaEntry> result = new ArrayList<>();
                 PendingChunkReplicaEntry entry = pending.peekFirst();
-                while (entry != null && entry.entry.getEntryId() <= upToEntryId) {
+                while (entry != null && entry.entry.getAddress().getEntryId() <= upToEntryId) {
                     pending.pollFirst();
                     result.add(entry);
                     entry = pending.peekFirst();
@@ -266,7 +266,7 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
         private Long getLowestPendingEntryId() {
             synchronized (lock) {
                 PendingChunkReplicaEntry entry = pending.peekFirst();
-                return entry == null ? null : entry.entry.getEntryId();
+                return entry == null ? null : entry.entry.getAddress().getEntryId();
             }
         }
     }

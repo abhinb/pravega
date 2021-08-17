@@ -22,6 +22,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import lombok.Getter;
+import lombok.NonNull;
 import lombok.val;
 
 public class LogServerManager {
@@ -29,7 +30,7 @@ public class LogServerManager {
     private final List<URI> serverUris;
     private final SecureRandom random = new SecureRandom();
 
-    public LogServerManager(List<URI> serverUris) {
+    public LogServerManager(@NonNull Collection<URI> serverUris) {
         this.serverUris = List.copyOf(serverUris);
     }
 

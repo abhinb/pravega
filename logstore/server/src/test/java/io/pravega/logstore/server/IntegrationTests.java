@@ -26,6 +26,7 @@ import io.pravega.logstore.client.internal.LogChunkReplicaWriterImpl;
 import io.pravega.logstore.client.internal.LogChunkWriterImpl;
 import io.pravega.logstore.client.internal.LogServerManager;
 import io.pravega.logstore.client.internal.PendingAddEntry;
+import io.pravega.logstore.client.internal.WriteChunk;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import io.pravega.logstore.server.service.ApplicationConfig;
 import java.net.URI;
@@ -122,6 +123,7 @@ public class IntegrationTests {
                 log.debug("    Entry {} acked.", address);
             });
             f.join(); // todo enable for latency test; disable for tput test
+            log.info("WriteStats={}.", writer.getQueueStatistics());
         }
 
         val writeSendTime = timer.getElapsedMillis();
@@ -168,11 +170,11 @@ public class IntegrationTests {
         val data = new byte[writeSize];
         rnd.nextBytes(data);
         val timer = new Timer();
+        val writeChunk = new WriteChunk(writer);
         for (int i = 0; i < count; i++) {
             val startTimeNanos = timer.getElapsedNanos();
             val e = new PendingAddEntry(Unpooled.wrappedBuffer(data), i * i);
-            e.setWriter(writer);
-            e.setEntryId(i);
+            e.setWriter(writeChunk);
             val f = writer.addEntry(e);
             futures.add(f);
             f.thenRun(() -> {
@@ -225,11 +227,11 @@ public class IntegrationTests {
         val data = new byte[writeSize];
         rnd.nextBytes(data);
         val timer = new Timer();
+        val writeChunk = new WriteChunk(writer);
         for (int i = 0; i < count; i++) {
             val startTimeNanos = timer.getElapsedNanos();
             val e = new PendingAddEntry(Unpooled.wrappedBuffer(data), i * i);
-            e.setWriter(writer);
-            e.setEntryId(i);
+            e.setWriter(writeChunk);
             val f = writer.addEntry(e);
             futures.add(f);
             f.thenRun(() -> {
