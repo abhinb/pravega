@@ -19,7 +19,6 @@ import io.netty.buffer.ByteBuf;
 import io.pravega.logstore.server.ChunkEntry;
 import java.util.concurrent.CompletableFuture;
 import lombok.Getter;
-import lombok.NonNull;
 import lombok.Setter;
 
 @Getter
@@ -30,9 +29,9 @@ class PendingWrite {
     private volatile long offset = -1L;
     private final CompletableFuture<Long> completion = new CompletableFuture<>();
 
-    PendingWrite(@NonNull ChunkEntry entry) {
+    PendingWrite(ChunkEntry entry, DataFormat dataFormat) {
         this.entryId = entry.getEntryId();
-        this.data = entry.getData();
+        this.data = dataFormat.serialize(entry);
     }
 
     void slice(int fromOffset) {

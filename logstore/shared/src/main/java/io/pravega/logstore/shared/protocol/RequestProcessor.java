@@ -17,8 +17,11 @@ package io.pravega.logstore.shared.protocol;
 
 import io.pravega.logstore.shared.protocol.commands.AppendEntry;
 import io.pravega.logstore.shared.protocol.commands.CreateChunk;
+import io.pravega.logstore.shared.protocol.commands.GetChunkInfo;
 import io.pravega.logstore.shared.protocol.commands.Hello;
 import io.pravega.logstore.shared.protocol.commands.KeepAlive;
+import io.pravega.logstore.shared.protocol.commands.ReadEntries;
+import io.pravega.logstore.shared.protocol.commands.SealChunk;
 
 public interface RequestProcessor extends AutoCloseable {
 
@@ -31,5 +34,11 @@ public interface RequestProcessor extends AutoCloseable {
 
     void createChunk(CreateChunk request);
 
+    void sealChunk(SealChunk request);
+
     void appendEntry(AppendEntry request);
+
+    void readEntries(ReadEntries request);
+
+    void getChunkInfo(GetChunkInfo request);
 }

@@ -18,6 +18,7 @@ package io.pravega.logstore.server.chunks;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import java.util.List;
+import lombok.Data;
 import lombok.val;
 
 class IndexFormat {
@@ -35,5 +36,18 @@ class IndexFormat {
         }
 
         return result.writerIndex(size).readerIndex(0);
+    }
+
+    public IndexEntry deserialize(ByteBuf buf) {
+        if (buf.readableBytes() < SINGLE_ENTRY_LENGTH) {
+            return null;
+        }
+        return new IndexEntry(buf.readLong(), buf.readLong());
+    }
+
+    @Data
+    static class IndexEntry {
+        private final long entryId;
+        private final long offset;
     }
 }

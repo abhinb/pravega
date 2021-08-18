@@ -18,7 +18,10 @@ package io.pravega.logstore.shared.protocol;
 import io.pravega.logstore.shared.protocol.commands.BadEntryId;
 import io.pravega.logstore.shared.protocol.commands.ChunkAlreadyExists;
 import io.pravega.logstore.shared.protocol.commands.ChunkCreated;
+import io.pravega.logstore.shared.protocol.commands.ChunkInfo;
 import io.pravega.logstore.shared.protocol.commands.ChunkNotExists;
+import io.pravega.logstore.shared.protocol.commands.ChunkSealed;
+import io.pravega.logstore.shared.protocol.commands.EntriesRead;
 import io.pravega.logstore.shared.protocol.commands.EntryAppended;
 import io.pravega.logstore.shared.protocol.commands.ErrorMessage;
 import io.pravega.logstore.shared.protocol.commands.Hello;
@@ -57,11 +60,23 @@ public interface ReplyProcessor {
         throw new UnsupportedOperationException("chunkNotExists");
     }
 
+    default void chunkSealed(ChunkSealed reply) {
+        throw new UnsupportedOperationException("chunkSealed");
+    }
+
     default void entryAppended(EntryAppended entryAppended) {
         throw new UnsupportedOperationException("entryAppended");
     }
 
     default void badEntryId(BadEntryId badEntryId) {
         throw new UnsupportedOperationException("badEntryId");
+    }
+
+    default void entriesRead(EntriesRead entriesRead) {
+        throw new UnsupportedOperationException("entriesRead");
+    }
+
+    default void chunkInfo(ChunkInfo chunkInfo) {
+        throw new UnsupportedOperationException("chunkInfo");
     }
 }

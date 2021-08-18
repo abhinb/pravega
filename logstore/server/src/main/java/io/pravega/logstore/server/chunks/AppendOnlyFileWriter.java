@@ -23,10 +23,11 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import javax.annotation.concurrent.GuardedBy;
 import lombok.Getter;
-import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
+@RequiredArgsConstructor
 class AppendOnlyFileWriter implements AutoCloseable {
     @Getter
     private final Path path;
@@ -37,13 +38,6 @@ class AppendOnlyFileWriter implements AutoCloseable {
     @GuardedBy("lock")
     private volatile long length;
     private final Object lock = new Object();
-
-    protected AppendOnlyFileWriter(@NonNull Path path, boolean sync) {
-        this.path = path;
-        this.sync = sync;
-        this.length = 0L;
-        this.channel = null; // We require open() to be invoked.
-    }
 
     @Override
     public void close() throws IOException {
@@ -86,7 +80,7 @@ class AppendOnlyFileWriter implements AutoCloseable {
                 // channel with appropriate options.
                 int bytesWritten = data.readBytes(this.channel, this.length, data.readableBytes());
                 assert bytesWritten > 0 : "unable to make write progress";
-                log.debug("{}: Wrote {} bytes at offset {} ({} remaining).", this, this.length, bytesWritten, data.readableBytes());
+                log.debug("{}: Wrote {} bytes at offset {} ({} remaining).", this.path, this.length, bytesWritten, data.readableBytes());
             }
 
             if (this.sync) {

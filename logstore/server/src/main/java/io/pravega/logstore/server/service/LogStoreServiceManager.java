@@ -45,10 +45,10 @@ public class LogStoreServiceManager implements AutoCloseable {
         this.coreExecutor = ExecutorServiceHelpers.newScheduledThreadPool(logStoreConfig.getCorePoolSize(), "core");
         this.writeExecutor = ExecutorServiceHelpers.newScheduledThreadPool(logStoreConfig.getCorePoolSize(), "write");
         this.readExecutor = ExecutorServiceHelpers.newScheduledThreadPool(logStoreConfig.getCorePoolSize(), "read");
-        this.chunkReplicaFactory = new ChunkReplicaFactory(logStoreConfig, this.writeExecutor);
+        this.chunkReplicaFactory = new ChunkReplicaFactory(logStoreConfig, this.writeExecutor, this.readExecutor);
         this.chunkReplicaFactory.initialize();
         this.chunkReplicaManager = new ChunkReplicaManager(this.chunkReplicaFactory, this.writeExecutor, this.readExecutor);
-        this.service = new LogStoreService(this.chunkReplicaManager, logStoreConfig, this.coreExecutor);
+        this.service = new LogStoreService(this.chunkReplicaManager, logStoreConfig, this.coreExecutor, this.writeExecutor, this.readExecutor);
     }
 
     public static LogStoreServiceManager.LogStoreServiceManagerBuilder inMemoryBuilder(ApplicationConfig config) {
@@ -57,6 +57,6 @@ public class LogStoreServiceManager implements AutoCloseable {
 
     @Override
     public void close() {
-        ExecutorServiceHelpers.shutdown(this.coreExecutor, this.writeExecutor, this.readExecutor);
+        ExecutorServiceHelpers.shutdown(SHUTDOWN_TIMEOUT, this.coreExecutor, this.writeExecutor, this.readExecutor);
     }
 }

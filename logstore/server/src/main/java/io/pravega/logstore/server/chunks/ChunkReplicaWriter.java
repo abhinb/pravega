@@ -19,6 +19,7 @@ import com.google.common.base.Preconditions;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.pravega.common.Exceptions;
+import io.pravega.common.ObjectClosedException;
 import io.pravega.common.concurrent.Futures;
 import io.pravega.common.util.BlockingDrainingQueue;
 import io.pravega.logstore.server.ChunkEntry;
@@ -27,9 +28,11 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Queue;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.Getter;
 import lombok.NonNull;
@@ -40,7 +43,9 @@ import lombok.val;
 
 @Slf4j
 public class ChunkReplicaWriter implements AutoCloseable {
+    private static final DataFormat DATA_FORMAT = new DataFormat();
     private static final IndexFormat INDEX_FORMAT = new IndexFormat();
+    private final long chunkId;
     private final LogStoreConfig config;
     private final AppendOnlyFileWriter dataWriter;
     private final AppendOnlyFileWriter indexWriter;
@@ -49,15 +54,18 @@ public class ChunkReplicaWriter implements AutoCloseable {
     private final AtomicBoolean closed;
     private final AtomicReference<CompletableFuture<Void>> runner;
     private final ScheduledExecutorService executorService;
+    private final AtomicLong entryCount;
     @Setter
     private volatile Runnable onClose;
 
     ChunkReplicaWriter(long chunkId, @NonNull LogStoreConfig config, @NonNull ScheduledExecutorService executorService) {
+        this.chunkId = chunkId;
         this.config = config;
         this.traceLogId = String.format("ReplicaWriter[%s]", chunkId);
         this.dataWriter = new AppendOnlyFileWriter(config.getChunkReplicaDataFilePath(chunkId), true);
         this.indexWriter = new AppendOnlyFileWriter(config.getChunkReplicaIndexFilePath(chunkId), false);
         this.writeQueue = new BlockingDrainingQueue<>();
+        this.entryCount = new AtomicLong(0);
         this.closed = new AtomicBoolean(false);
         this.executorService = executorService;
         this.runner = new AtomicReference<>();
@@ -80,6 +88,15 @@ public class ChunkReplicaWriter implements AutoCloseable {
                 log.info("{}: Index File Writer flushed and closed with length {}.", this.traceLogId, this.indexWriter.getLength());
             } catch (IOException ex) {
                 log.error("{}: Unable to close Index File Writer.", this.traceLogId, ex);
+            }
+
+            // Write metadata.
+            try (val metadataWriter = new AppendOnlyFileWriter(config.getChunkReplicaMetadataFilePath(this.chunkId), true)) {
+                metadataWriter.open();
+                val metadata = new ChunkMetadata(this.chunkId, this.entryCount.get(), this.dataWriter.getLength(), this.indexWriter.getLength());
+                metadataWriter.append(Unpooled.wrappedBuffer(ChunkMetadata.SERIALIZER.serialize(metadata).getCopy()), 0L);
+            } catch (Throwable ex) {
+                log.error("{}: Unable to write metadata.", this.traceLogId, ex);
             }
 
             log.info("Closed.");
@@ -106,7 +123,7 @@ public class ChunkReplicaWriter implements AutoCloseable {
 
     public CompletableFuture<Long> append(@NonNull ChunkEntry entry) {
         Preconditions.checkState(this.runner.get() != null, "Not started.");
-        val write = new PendingWrite(entry);
+        val write = new PendingWrite(entry, DATA_FORMAT);
         log.debug("{}: append {}.", this.traceLogId, entry);
         this.writeQueue.add(write); // this will throw ObjectClosedException if we are closed.
         return write.getCompletion();
@@ -167,7 +184,8 @@ public class ChunkReplicaWriter implements AutoCloseable {
         log.debug("{}: Flushed {}.", this.traceLogId, writeBatch);
 
         // 2. Ack writes.
-        writeBatch.complete();
+        int count = writeBatch.complete();
+        this.entryCount.addAndGet(count);
         log.trace("{}: Acked {}.", this.traceLogId, writeBatch);
 
         // 3. Write index.
@@ -193,7 +211,10 @@ public class ChunkReplicaWriter implements AutoCloseable {
 
     @SneakyThrows
     private Void handleError(Throwable ex) {
-        log.error("{}: Processing error. Closing.", this.traceLogId, ex);
+        ex = Exceptions.unwrap(ex);
+        if (!(ex instanceof CancellationException || ex instanceof ObjectClosedException)) {
+            log.error("{}: Processing error. Closing.", this.traceLogId, ex);
+        }
         close();
         return null;
     }
@@ -255,8 +276,9 @@ public class ChunkReplicaWriter implements AutoCloseable {
             return !write.hasData();
         }
 
-        void complete() {
+        int complete() {
             this.writes.forEach(PendingWrite::complete);
+            return this.writes.size();
         }
     }
 }

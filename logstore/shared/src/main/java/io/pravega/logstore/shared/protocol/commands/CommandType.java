@@ -24,18 +24,30 @@ import java.util.Map;
 import lombok.Getter;
 
 public enum CommandType {
+    // Admin.
     HELLO(-127, Hello::readFrom),
     ERROR_MESSAGE(-126, Hello::readFrom),
     KEEP_ALIVE(-125, KeepAlive::readFrom),
 
+    // Control path.
     CREATE_CHUNK(1, CreateChunk::readFrom),
     CHUNK_CREATED(2, ChunkCreated::readFrom),
     CHUNK_ALREADY_EXISTS(3, ChunkAlreadyExists::readFrom),
     CHUNK_NOT_EXISTS(4, ChunkNotExists::readFrom),
 
+    SEAL_CHUNK(5, SealChunk::readFrom),
+    CHUNK_SEALED(6, ChunkSealed::readFrom),
+
+    // Data Path.
     APPEND_ENTRY(10, AppendEntry::readFrom),
     ENTRY_APPENDED(11, EntryAppended::readFrom),
-    BAD_ENTRY_ID(12, BadEntryId::readFrom);
+    BAD_ENTRY_ID(12, BadEntryId::readFrom),
+
+    READ_ENTRIES(13, ReadEntries::readFrom),
+    ENTRIES_READ(14, EntriesRead::readFrom),
+
+    GET_CHUNK_INFO(15, GetChunkInfo::readFrom),
+    CHUNK_INFO(16, ChunkInfo::readFrom);
 
     private static final Map<Integer, CommandType> MAPPING;
     @Getter

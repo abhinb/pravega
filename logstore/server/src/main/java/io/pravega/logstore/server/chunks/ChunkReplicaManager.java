@@ -16,32 +16,46 @@
 package io.pravega.logstore.server.chunks;
 
 import io.pravega.common.Exceptions;
+import io.pravega.common.util.SimpleCache;
 import io.pravega.logstore.shared.LogChunkExistsException;
 import io.pravega.logstore.shared.LogChunkNotExistsException;
 import java.nio.file.FileAlreadyExistsException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 
 @Slf4j
-@RequiredArgsConstructor
 public class ChunkReplicaManager implements AutoCloseable {
-    @NonNull
+    private static final int READ_CACHE_SIZE = 50;
+    private static final Duration READ_CACHE_EXPIRATION = Duration.ofSeconds(60);
     private final ChunkReplicaFactory chunkReplicaFactory;
-    @NonNull
     private final ScheduledExecutorService writeExecutor;
-    @NonNull
     private final ScheduledExecutorService readExecutor;
-    private final ConcurrentHashMap<Long, ChunkReplicaWriter> chunkWriters = new ConcurrentHashMap<>();
-    private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final ConcurrentHashMap<Long, ChunkReplicaWriter> chunkWriters;
+    private final SimpleCache<Long, ChunkReplicaReader> chunkReaders;
+    private final ScheduledFuture<?> cacheCleanup;
+    private final AtomicBoolean closed;
+
+    public ChunkReplicaManager(@NonNull ChunkReplicaFactory replicaFactory, @NonNull ScheduledExecutorService writeExecutor,
+                        @NonNull ScheduledExecutorService readExecutor) {
+        this.chunkReplicaFactory = replicaFactory;
+        this.writeExecutor = writeExecutor;
+        this.readExecutor = readExecutor;
+        this.chunkWriters = new ConcurrentHashMap<>();
+        this.chunkReaders = new SimpleCache<>(READ_CACHE_SIZE, READ_CACHE_EXPIRATION, (id, reader) -> reader.close());
+        this.cacheCleanup = this.readExecutor.scheduleAtFixedRate(this.chunkReaders::cleanUp, READ_CACHE_EXPIRATION.toSeconds(), READ_CACHE_EXPIRATION.toSeconds(), TimeUnit.SECONDS);
+        this.closed = new AtomicBoolean(false);
+    }
 
     @Override
     public void close() {
@@ -49,6 +63,8 @@ public class ChunkReplicaManager implements AutoCloseable {
             val writers = new ArrayList<>(this.chunkWriters.values());
             this.chunkWriters.clear();
             writers.forEach(ChunkReplicaWriter::close);
+            this.cacheCleanup.cancel(true);
+            this.chunkReaders.cleanUpAll();
             log.info("Closed.");
         }
     }
@@ -102,6 +118,21 @@ public class ChunkReplicaManager implements AutoCloseable {
             throw new LogChunkNotExistsException(chunkId);
         }
         return writer;
+    }
+
+    public CompletableFuture<ChunkReplicaReader> getReader(long chunkId) {
+        Exceptions.checkNotClosed(this.closed.get(), this);
+        val reader = new AtomicReference<>(this.chunkReaders.get(chunkId));
+        if (reader.get() == null) {
+            reader.set(this.chunkReplicaFactory.createChunkReplicaReader(chunkId));
+            val oldReader = this.chunkReaders.putIfAbsent(chunkId, reader.get());
+            if (oldReader != null) {
+                reader.getAndSet(oldReader).close();
+            }
+        }
+
+        return reader.get().ensureInitialized()
+                .thenApply(v -> reader.get());
     }
 
     private void unregisterWriter(long chunkId, ChunkReplicaWriter writer) {

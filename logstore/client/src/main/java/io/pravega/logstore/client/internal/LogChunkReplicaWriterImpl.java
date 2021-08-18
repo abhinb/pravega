@@ -20,19 +20,11 @@ import io.pravega.common.Exceptions;
 import io.pravega.common.concurrent.Futures;
 import io.pravega.logstore.client.internal.connections.ClientConnection;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
-import io.pravega.logstore.client.internal.connections.ConnectionFailedException;
-import io.pravega.logstore.shared.LogChunkExistsException;
-import io.pravega.logstore.shared.LogChunkNotExistsException;
-import io.pravega.logstore.shared.protocol.ReplyProcessor;
-import io.pravega.logstore.shared.protocol.commands.AbstractCommand;
 import io.pravega.logstore.shared.protocol.commands.AppendEntry;
-import io.pravega.logstore.shared.protocol.commands.ChunkAlreadyExists;
 import io.pravega.logstore.shared.protocol.commands.ChunkCreated;
-import io.pravega.logstore.shared.protocol.commands.ChunkNotExists;
 import io.pravega.logstore.shared.protocol.commands.CreateChunk;
 import io.pravega.logstore.shared.protocol.commands.EntryAppended;
-import io.pravega.logstore.shared.protocol.commands.ErrorMessage;
-import io.pravega.logstore.shared.protocol.commands.Hello;
+import io.pravega.logstore.shared.protocol.commands.EntryData;
 import java.net.URI;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -43,6 +35,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import javax.annotation.concurrent.GuardedBy;
 import lombok.Getter;
 import lombok.NonNull;
@@ -74,7 +67,7 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
 
     @Override
     public CompletableFuture<Void> initialize(@NonNull ClientConnectionFactory connectionFactory) {
-        val responseProcessor = new ResponseProcessor();
+        val responseProcessor = new ResponseProcessor(this.traceLogId, this::failAndClose);
         try {
             connectionFactory.establishConnection(logStoreUri, responseProcessor)
                     .thenAccept(connection -> {
@@ -102,7 +95,7 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
 
     @Override
     public long getLength() {
-        return 0;
+        return this.state.length.get();
     }
 
     @Override
@@ -130,7 +123,8 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
         synchronized (writeOrderLock) {
             try {
                 val connection = this.connection;
-                val ae = new AppendEntry(entry.getAddress().getChunkId(), entry.getAddress().getEntryId(), entry.getCrc32(), entry.getData());
+                val entryData = new EntryData(entry.getAddress().getEntryId(), entry.getCrc32(), entry.getData());
+                val ae = new AppendEntry(entry.getAddress().getChunkId(), entryData);
                 log.trace("{}: Sending AppendEntry: {}", this, ae);
                 connection.send(ae);
                 return state.addPending(entry);
@@ -153,6 +147,11 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
     @Override
     public String toString() {
         return this.traceLogId;
+    }
+
+    private void failAndClose(Throwable ex) {
+        this.state.fail(ex);
+        close();
     }
 
     //region State
@@ -178,8 +177,9 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
 
         @Override
         public void close() {
-            fail(new CancellationException("Closing."));
-            this.closed = true;
+            if (!this.closed) {
+                fail(new CancellationException("Closing."));
+            }
         }
 
         private long getNextExpectedEntryId() {
@@ -214,7 +214,6 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
             // Complete the futures and release buffer in a different thread.
             executor.execute(() -> {
                 for (PendingChunkReplicaEntry toAck : pendingEntries) {
-                    this.length.addAndGet(toAck.entry.getLength());
                     toAck.completion.complete(null);
                 }
             });
@@ -234,6 +233,7 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
                 pending.addLast(pe);
                 this.nextExpectedEntryId++;
             }
+            this.length.addAndGet(entry.getLength());
             return pe.completion;
         }
 
@@ -275,45 +275,15 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
 
     //region ResponseProcessor
 
-    private final class ResponseProcessor implements ReplyProcessor {
-        @Override
-        public void connectionDropped() {
-            failConnection(new ConnectionFailedException(String.format("Connection dropped for %s.", traceLogId)));
-        }
-
-        @Override
-        public void hello(Hello hello) {
-            if (hello.getLowVersion() > AbstractCommand.WIRE_VERSION || hello.getHighVersion() < AbstractCommand.OLDEST_COMPATIBLE_VERSION) {
-                log.error("Incompatible wire protocol versions {}", hello);
-            } else {
-                log.info("Received hello: {}", hello);
-            }
-        }
-
-        @Override
-        public void chunkAlreadyExists(ChunkAlreadyExists alreadyExists) {
-            log.info("{}: Log Chunk Replica already exists.", traceLogId);
-            state.fail(new LogChunkExistsException(alreadyExists.getChunkId()));
-            close();
-        }
-
-        @Override
-        public void chunkNotExists(ChunkNotExists notExists) {
-            log.info("{}: Log Chunk Replica does not exist.", traceLogId);
-            state.fail(new LogChunkNotExistsException(notExists.getChunkId()));
-            close();
+    private final class ResponseProcessor extends ReplyProcessorBase {
+        ResponseProcessor(String traceLogId, Consumer<Throwable> errorCallback) {
+            super(traceLogId, errorCallback);
         }
 
         @Override
         public void chunkCreated(ChunkCreated chunkCreated) {
             log.info("{}: Log Chunk Replica created.", traceLogId);
             state.initialized.complete(null);
-        }
-
-        @Override
-        public void error(ErrorMessage errorMessage) {
-            log.info("{}: General error {}: {}.", traceLogId, errorMessage.getErrorCode(), errorMessage.getMessage());
-            state.fail(errorMessage.getThrowableException());
         }
 
         @Override
@@ -324,16 +294,6 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
             } catch (Exception e) {
                 failConnection(e);
             }
-        }
-
-        @Override
-        public void processingFailure(Exception error) {
-            failConnection(error);
-        }
-
-        private void failConnection(Throwable e) {
-            log.warn("{}: Failing connection with exception {}", traceLogId, e.toString());
-            state.fail(Exceptions.unwrap(e));
         }
     }
 

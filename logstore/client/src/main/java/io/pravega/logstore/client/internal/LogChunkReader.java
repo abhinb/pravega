@@ -15,29 +15,20 @@
  */
 package io.pravega.logstore.client.internal;
 
-import io.pravega.logstore.client.LogInfo;
-import io.pravega.logstore.client.LogReader;
+import io.pravega.common.util.AsyncIterator;
+import java.net.URI;
+import java.util.Collection;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
-public class LogReaderImpl implements LogReader {
-    @Override
-    public CompletableFuture<List<Entry>> getNext() {
-        return null;
-    }
+public interface LogChunkReader extends AsyncIterator<List<Entry>>, AutoCloseable {
+    long getChunkId();
 
-    @Override
-    public long getLogId() {
-        return 0;
-    }
+    long getEntryCount();
+
+    long getLength();
+
+    Collection<URI> getReplicaURIs();
 
     @Override
-    public LogInfo getInfo() {
-        return null;
-    }
-
-    @Override
-    public void close() {
-
-    }
+    void close();
 }

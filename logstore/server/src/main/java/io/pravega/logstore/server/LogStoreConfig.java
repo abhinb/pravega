@@ -35,11 +35,14 @@ public class LogStoreConfig {
     public static final Property<Integer> READ_POOL_SIZE = Property.named("threadpool.read.size", 16);
     public static final Property<Integer> MAX_QUEUE_READ_COUNT = Property.named("writer.queue.read.size.max", 10);
     public static final Property<Integer> WRITE_BLOCK_SIZE = Property.named("writer.block.size.bytes", 4 * 1024 * 1024);
+    public static final Property<Integer> READ_BLOCK_SIZE = Property.named("reader.block.size.bytes", 4 * 1024 * 1024);
+    public static final Property<Integer> MAX_READ_SIZE = Property.named("reader.max.size.bytes", 12 * 1024 * 1024);
 
     public static final String COMPONENT_CODE = "logstore";
 
     private static final String DATA_FILE_PATH_TEMPLATE = "%s.data";
     private static final String INDEX_FILE_PATH_TEMPLATE = "%s.index";
+    private static final String METADATA_FILE_PATH_TEMPLATE = "%s.metadata";
 
     /**
      * The TCP Port number to listen to.
@@ -57,6 +60,8 @@ public class LogStoreConfig {
     private final int readPoolSize;
     private final int maxQueueReadCount;
     private final int writeBlockSize;
+    private final int readBlockSize;
+    private final int maxReadSize;
 
     private LogStoreConfig(TypedProperties properties) {
         this.listeningPort = properties.getInt(LISTENING_PORT);
@@ -72,6 +77,8 @@ public class LogStoreConfig {
         this.readPoolSize = properties.getPositiveInt(READ_POOL_SIZE);
         this.maxQueueReadCount = properties.getPositiveInt(MAX_QUEUE_READ_COUNT);
         this.writeBlockSize = properties.getPositiveInt(WRITE_BLOCK_SIZE);
+        this.readBlockSize = properties.getPositiveInt(READ_BLOCK_SIZE);
+        this.maxReadSize = properties.getPositiveInt(MAX_READ_SIZE);
     }
 
     /**
@@ -94,6 +101,10 @@ public class LogStoreConfig {
 
     public Path getChunkReplicaIndexFilePath(long chunkId) {
         return Path.of(this.storagePath, String.format(INDEX_FILE_PATH_TEMPLATE, chunkId));
+    }
+
+    public Path getChunkReplicaMetadataFilePath(long chunkId) {
+        return Path.of(this.storagePath, String.format(METADATA_FILE_PATH_TEMPLATE, chunkId));
     }
 }
 

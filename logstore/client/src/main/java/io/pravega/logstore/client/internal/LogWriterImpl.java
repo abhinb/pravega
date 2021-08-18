@@ -38,6 +38,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -399,7 +400,7 @@ public class LogWriterImpl implements LogWriter {
 
     private static boolean isRetryable(Throwable ex) {
         ex = Exceptions.unwrap(ex);
-        return false; // todo implement this once rollover is done.
+        return ex instanceof CancellationException || ex instanceof ObjectClosedException;
     }
 
     private void handleWriteProcessorFailures(Throwable exception) {

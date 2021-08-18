@@ -25,35 +25,28 @@ import lombok.EqualsAndHashCode;
 
 @Data
 @EqualsAndHashCode(callSuper = false)
-public final class AppendEntry extends ReleasableCommand implements Request {
-    final CommandType type = CommandType.APPEND_ENTRY;
+public class ReadEntries extends AbstractCommand implements Request {
+    final CommandType type = CommandType.READ_ENTRIES;
+    final long requestId;
     final long chunkId;
-    final EntryData entry;
+    final long fromEntryId;
 
     @Override
     public void writeFields(DataOutput out) throws IOException {
+        out.writeLong(this.requestId);
         out.writeLong(this.chunkId);
-        this.entry.writeTo(out);
+        out.writeLong(this.fromEntryId);
     }
 
     public static AbstractCommand readFrom(EnhancedByteBufInputStream in, int length) throws IOException {
+        long requestId = in.readLong();
         long chunkId = in.readLong();
-        EntryData e = EntryData.readFrom(in);
-        return new AppendEntry(chunkId, e).requireRelease();
-    }
-
-    @Override
-    void releaseInternal() {
-        this.entry.release();
-    }
-
-    @Override
-    public long getRequestId() {
-        return 0;
+        long fromEntryId = in.readLong();
+        return new ReadEntries(requestId, chunkId, fromEntryId);
     }
 
     @Override
     public void process(RequestProcessor processor) {
-        processor.appendEntry(this);
+        processor.readEntries(this);
     }
 }

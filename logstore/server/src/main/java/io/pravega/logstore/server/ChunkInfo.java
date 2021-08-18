@@ -13,31 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.logstore.client.internal;
+package io.pravega.logstore.server;
 
-import io.pravega.logstore.client.LogInfo;
-import io.pravega.logstore.client.LogReader;
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
+public interface ChunkInfo {
+    long getChunkId();
 
-public class LogReaderImpl implements LogReader {
-    @Override
-    public CompletableFuture<List<Entry>> getNext() {
-        return null;
-    }
+    long getEntryCount();
 
-    @Override
-    public long getLogId() {
-        return 0;
-    }
-
-    @Override
-    public LogInfo getInfo() {
-        return null;
-    }
-
-    @Override
-    public void close() {
-
-    }
+    long getDataLength();
 }

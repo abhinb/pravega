@@ -16,35 +16,48 @@
 package io.pravega.logstore.shared.protocol.commands;
 
 import io.pravega.logstore.shared.protocol.EnhancedByteBufInputStream;
-import io.pravega.logstore.shared.protocol.Request;
-import io.pravega.logstore.shared.protocol.RequestProcessor;
+import io.pravega.logstore.shared.protocol.Reply;
+import io.pravega.logstore.shared.protocol.ReplyProcessor;
 import java.io.DataOutput;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.val;
 
 @Data
 @EqualsAndHashCode(callSuper = false)
-public final class AppendEntry extends ReleasableCommand implements Request {
-    final CommandType type = CommandType.APPEND_ENTRY;
+public class EntriesRead extends ReleasableCommand implements Reply {
+    final CommandType type = CommandType.ENTRIES_READ;
+    final long requestId;
     final long chunkId;
-    final EntryData entry;
+    final List<EntryData> entries;
 
     @Override
     public void writeFields(DataOutput out) throws IOException {
+        out.writeLong(this.requestId);
         out.writeLong(this.chunkId);
-        this.entry.writeTo(out);
+        out.writeInt(this.entries.size());
+        for (EntryData e : this.entries) {
+            e.writeTo(out);
+        }
     }
 
     public static AbstractCommand readFrom(EnhancedByteBufInputStream in, int length) throws IOException {
+        long requestId = in.readLong();
         long chunkId = in.readLong();
-        EntryData e = EntryData.readFrom(in);
-        return new AppendEntry(chunkId, e).requireRelease();
+        int count = in.readInt();
+        val entries = new ArrayList<EntryData>();
+        for (int i = 0; i < count; i++) {
+            entries.add(EntryData.readFrom(in));
+        }
+        return new EntriesRead(requestId, chunkId, entries).requireRelease();
     }
 
     @Override
     void releaseInternal() {
-        this.entry.release();
+        this.entries.forEach(EntryData::release);
     }
 
     @Override
@@ -53,7 +66,7 @@ public final class AppendEntry extends ReleasableCommand implements Request {
     }
 
     @Override
-    public void process(RequestProcessor processor) {
-        processor.appendEntry(this);
+    public void process(ReplyProcessor processor) {
+        processor.entriesRead(this);
     }
 }

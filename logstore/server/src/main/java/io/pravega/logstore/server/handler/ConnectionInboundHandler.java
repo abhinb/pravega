@@ -47,6 +47,12 @@ public class ConnectionInboundHandler extends ChannelInboundHandlerAdapter imple
     }
 
     @Override
+    public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
+        super.channelUnregistered(ctx);
+        close();
+    }
+
+    @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         Request request = (Request) msg;
         log.debug("Received request: {}", request);
@@ -86,6 +92,10 @@ public class ConnectionInboundHandler extends ChannelInboundHandlerAdapter imple
                 ch.eventLoop().execute(() -> ch.writeAndFlush(Unpooled.EMPTY_BUFFER).addListener(ChannelFutureListener.CLOSE));
             }
 
+            RequestProcessor rp = this.processor;
+            if (rp != null) {
+                rp.close();
+            }
             this.closed = true;
         }
     }

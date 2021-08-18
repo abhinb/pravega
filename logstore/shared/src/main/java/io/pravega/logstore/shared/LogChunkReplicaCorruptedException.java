@@ -13,31 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.logstore.client.internal;
+package io.pravega.logstore.shared;
 
-import io.pravega.logstore.client.LogInfo;
-import io.pravega.logstore.client.LogReader;
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
-
-public class LogReaderImpl implements LogReader {
-    @Override
-    public CompletableFuture<List<Entry>> getNext() {
-        return null;
+public class LogChunkReplicaCorruptedException extends RuntimeException {
+    public LogChunkReplicaCorruptedException(long chunkId, String messageFormat, Object... messageArgs) {
+        this(String.format("Log Chunk Replica %s is corrupted: %s.", chunkId, String.format(messageFormat, messageArgs)));
     }
 
-    @Override
-    public long getLogId() {
-        return 0;
-    }
-
-    @Override
-    public LogInfo getInfo() {
-        return null;
-    }
-
-    @Override
-    public void close() {
-
+    public LogChunkReplicaCorruptedException(String message) {
+        super(message);
     }
 }

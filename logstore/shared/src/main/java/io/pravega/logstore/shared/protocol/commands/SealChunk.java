@@ -15,9 +15,9 @@
  */
 package io.pravega.logstore.shared.protocol.commands;
 
-import io.pravega.logstore.shared.protocol.EnhancedByteBufInputStream;
 import io.pravega.logstore.shared.protocol.Request;
 import io.pravega.logstore.shared.protocol.RequestProcessor;
+import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import lombok.Data;
@@ -25,35 +25,25 @@ import lombok.EqualsAndHashCode;
 
 @Data
 @EqualsAndHashCode(callSuper = false)
-public final class AppendEntry extends ReleasableCommand implements Request {
-    final CommandType type = CommandType.APPEND_ENTRY;
+public class SealChunk extends AbstractCommand implements Request {
+    final CommandType type = CommandType.SEAL_CHUNK;
+    final long requestId;
     final long chunkId;
-    final EntryData entry;
+
+    @Override
+    public void process(RequestProcessor cp) {
+        cp.sealChunk(this);
+    }
 
     @Override
     public void writeFields(DataOutput out) throws IOException {
+        out.writeLong(requestId);
         out.writeLong(this.chunkId);
-        this.entry.writeTo(out);
     }
 
-    public static AbstractCommand readFrom(EnhancedByteBufInputStream in, int length) throws IOException {
+    public static AbstractCommand readFrom(DataInput in, int length) throws IOException {
+        long requestId = in.readLong();
         long chunkId = in.readLong();
-        EntryData e = EntryData.readFrom(in);
-        return new AppendEntry(chunkId, e).requireRelease();
-    }
-
-    @Override
-    void releaseInternal() {
-        this.entry.release();
-    }
-
-    @Override
-    public long getRequestId() {
-        return 0;
-    }
-
-    @Override
-    public void process(RequestProcessor processor) {
-        processor.appendEntry(this);
+        return new SealChunk(requestId, chunkId);
     }
 }

@@ -21,7 +21,9 @@ import io.pravega.common.Timer;
 import io.pravega.common.concurrent.Futures;
 import io.pravega.logstore.client.LogClient;
 import io.pravega.logstore.client.LogClientConfig;
+import io.pravega.logstore.client.internal.Entry;
 import io.pravega.logstore.client.internal.EntryAddress;
+import io.pravega.logstore.client.internal.LogChunkReplicaReaderImpl;
 import io.pravega.logstore.client.internal.LogChunkReplicaWriterImpl;
 import io.pravega.logstore.client.internal.LogChunkWriterImpl;
 import io.pravega.logstore.client.internal.LogServerManager;
@@ -54,7 +56,7 @@ public class IntegrationTests {
             Arrays.asList(LOCAL_URI_1, LOCAL_URI_2, LOCAL_URI_3));
     private static final int ZK_PORT = 2181;
     private static final LogClientConfig CLIENT_CONFIG = LogClientConfig.builder()
-            .replicationFactor(1)
+            .replicationFactor(3)
             .clientThreadPoolSize(4)
             .rolloverSizeBytes(10 * 1024 * 1024)
             .zkURL("localhost:" + ZK_PORT)
@@ -94,7 +96,7 @@ public class IntegrationTests {
 
     @Test
     public void testLogWriter() throws Exception {
-        final int count = 200;
+        final int count = 1000;
         final int writeSize = 1000000;
         final long logId = 0L;
         @Cleanup
@@ -132,7 +134,7 @@ public class IntegrationTests {
         Futures.allOf(futures).join();
         val writeAckTime = timer.getElapsedMillis();
         log.info("All entries acked.");
-
+        writer.close();
         if (latencies.size() > 0) {
             val avgLatency = latencies.stream().mapToInt(i -> i).average().orElse(0);
             val maxLatency = latencies.stream().mapToInt(i -> i).max().orElse(0);
@@ -148,7 +150,7 @@ public class IntegrationTests {
 
     @Test
     public void testLogChunkWriter() throws Exception {
-        final int count = 1000;
+        final int count = 100;
         final int writeSize = 1000000;
         final int replicaCount = 3;
         final long logId = 0L;
@@ -193,6 +195,7 @@ public class IntegrationTests {
         val writeAckTime = timer.getElapsedMillis();
         log.info("All entries acked.");
 
+        writer.close();
         val avgLatency = latencies.stream().mapToInt(i -> i).average().getAsDouble();
         val maxLatency = latencies.stream().mapToInt(i -> i).max().getAsInt();
         latencies.sort(Integer::compareTo);
@@ -206,8 +209,8 @@ public class IntegrationTests {
     }
 
     @Test
-    public void testLogChunkReplicaWriter() throws Exception {
-        final int count = 1000;
+    public void testLogChunkReplicaWriterAndReader() throws Exception {
+        final int count = 200;
         final int writeSize = 1000000;
         final long logId = 0L;
         final long chunkId = 0L;
@@ -249,17 +252,39 @@ public class IntegrationTests {
         Futures.allOf(futures).join();
         val writeAckTime = timer.getElapsedMillis();
         log.info("All entries acked.");
-        //Thread.sleep(5000);// TODO
+        writer.close();
 
         val avgLatency = latencies.stream().mapToInt(i -> i).average().getAsDouble();
         val maxLatency = latencies.stream().mapToInt(i -> i).max().getAsInt();
         latencies.sort(Integer::compareTo);
-        System.out.println(String.format("RESULT: WriteSend: %s ms, WriteAck: %s ms, L_avg: %.1f, L50: %s, L90: %s, L99: %s, L_max: %s",
+        System.out.println(String.format("WRITE_RESULT: WriteSend: %s ms, WriteAck: %s ms, L_avg: %.1f, L50: %s, L90: %s, L99: %s, L_max: %s",
                 writeSendTime, writeAckTime, avgLatency,
                 latencies.get(latencies.size() / 2),
                 latencies.get((int) (latencies.size() * 0.9)),
                 latencies.get((int) (latencies.size() * 0.99)),
                 maxLatency));
+
+        @Cleanup
+        val reader = new LogChunkReplicaReaderImpl(logId, chunkId, LOCAL_URI_1, factory.getInternalExecutor());
+        log.info("Created Reader");
+        reader.initialize(factory).join();
+        log.info("Initialized Reader");
+
+        log.info("Chunk Info: Chunk Id={}, EntryCount={}, Length={}.", reader.getChunkId(), reader.getEntryCount(), reader.getLength());
+
+        val iterator = reader.asSequential(factory.getInternalExecutor()).asIterator();
+        int readCount = 0;
+        long readLength = 0;
+        while (iterator.hasNext()) {
+            val entryList = iterator.next();
+            int length = entryList.stream().mapToInt(Entry::getLength).sum();
+            log.info("Read {} entries ({} bytes).", entryList.size(), length);
+
+            readCount += entryList.size();
+            readLength += length;
+        }
+
+        log.info("READ_RESULT: Chunk Id={}, EntryCount={}, Length={}.", reader.getChunkId(), readCount, readLength);
 
     }
 }

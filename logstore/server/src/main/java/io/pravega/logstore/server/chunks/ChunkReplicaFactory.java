@@ -31,6 +31,8 @@ public class ChunkReplicaFactory {
     private final LogStoreConfig config;
     @NonNull
     private final ScheduledExecutorService writeExecutor;
+    @NonNull
+    private final ScheduledExecutorService readExecutor;
     private volatile boolean initialized;
 
     public void initialize() {
@@ -55,5 +57,10 @@ public class ChunkReplicaFactory {
     public ChunkReplicaWriter createChunkReplica(long chunkId) {
         Preconditions.checkState(this.initialized, "Not initialized.");
         return new ChunkReplicaWriter(chunkId, this.config, this.writeExecutor);
+    }
+
+    public ChunkReplicaReader createChunkReplicaReader(long chunkId) {
+        Preconditions.checkState(this.initialized, "Not initialized.");
+        return new ChunkReplicaReader(chunkId, this.config, this.readExecutor);
     }
 }
