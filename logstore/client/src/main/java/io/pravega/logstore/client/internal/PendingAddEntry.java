@@ -18,6 +18,8 @@ package io.pravega.logstore.client.internal;
 import com.google.common.base.Preconditions;
 import io.netty.buffer.ByteBuf;
 import io.pravega.common.Timer;
+import io.pravega.logstore.client.Entry;
+import io.pravega.logstore.client.EntryAddress;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;

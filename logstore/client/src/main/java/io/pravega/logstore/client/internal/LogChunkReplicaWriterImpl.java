@@ -18,6 +18,7 @@ package io.pravega.logstore.client.internal;
 import com.google.common.base.Preconditions;
 import io.pravega.common.Exceptions;
 import io.pravega.common.concurrent.Futures;
+import io.pravega.logstore.client.Entry;
 import io.pravega.logstore.client.internal.connections.ClientConnection;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import io.pravega.logstore.shared.protocol.commands.AppendEntry;

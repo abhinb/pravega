@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.logstore.client.internal;
+package io.pravega.logstore.client;
 
 import lombok.Data;
 

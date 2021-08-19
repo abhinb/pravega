@@ -15,10 +15,13 @@
  */
 package io.pravega.segmentstore.storage.impl.logstore;
 
+import com.google.common.collect.Streams;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.pravega.common.util.CloseableIterator;
 import io.pravega.common.util.CompositeArrayView;
+import io.pravega.logstore.client.Entry;
+import io.pravega.logstore.client.LogReader;
 import io.pravega.logstore.client.LogWriter;
 import io.pravega.segmentstore.storage.DurableDataLog;
 import io.pravega.segmentstore.storage.DurableDataLogException;
@@ -26,11 +29,16 @@ import io.pravega.segmentstore.storage.LogAddress;
 import io.pravega.segmentstore.storage.QueueStats;
 import io.pravega.segmentstore.storage.ThrottleSourceListener;
 import io.pravega.segmentstore.storage.WriteSettings;
+import io.pravega.shared.protocol.netty.EnhancedByteBufInputStream;
+import java.io.InputStream;
 import java.time.Duration;
+import java.util.Collection;
+import java.util.Iterator;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.Getter;
 import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import lombok.val;
 
 public class LogStoreLog implements DurableDataLog {
@@ -39,7 +47,6 @@ public class LogStoreLog implements DurableDataLog {
      */
     @Getter
     private final WriteSettings writeSettings;
-
     private final LogWriter logWriter;
 
     LogStoreLog(@NonNull LogWriter logWriter) {
@@ -74,7 +81,7 @@ public class LogStoreLog implements DurableDataLog {
 
     @Override
     public CloseableIterator<ReadItem, DurableDataLogException> getReader() throws DurableDataLogException {
-        return null; // TODO implement this, check QueueStatistics
+        return new ReadIterator(this.logWriter.getReader());
     }
 
     @Override
@@ -107,6 +114,51 @@ public class LogStoreLog implements DurableDataLog {
     public CompletableFuture<Void> truncate(LogAddress upToAddress, Duration timeout) {
         // Not implemented.
         return CompletableFuture.completedFuture(null);
+    }
+
+
+    private static class ReadIterator implements CloseableIterator<ReadItem, DurableDataLogException> {
+        private final LogReader logReader;
+        private final Iterator<Entry> itemIterator;
+
+        ReadIterator(@NonNull LogReader reader) {
+            this.logReader = reader;
+            this.itemIterator = Streams.stream(this.logReader.asIterator()).flatMap(Collection::stream).iterator();
+        }
+
+        @Override
+        public ReadItem getNext() throws DurableDataLogException {
+            if (this.itemIterator.hasNext()) {
+                return new EntryReadItem(this.itemIterator.next());
+            } else {
+                return null;
+            }
+        }
+
+        @Override
+        public void close() {
+            this.logReader.close();
+        }
+    }
+
+    @RequiredArgsConstructor
+    private static class EntryReadItem implements ReadItem {
+        private final Entry entry;
+
+        @Override
+        public InputStream getPayload() {
+            return new EnhancedByteBufInputStream(this.entry.getData());
+        }
+
+        @Override
+        public int getLength() {
+            return this.entry.getLength();
+        }
+
+        @Override
+        public LogAddress getAddress() {
+            return new LogEntryAddress(this.entry.getAddress());
+        }
     }
 
 

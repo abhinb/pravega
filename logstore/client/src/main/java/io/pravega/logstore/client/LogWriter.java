@@ -16,7 +16,6 @@
 package io.pravega.logstore.client;
 
 import io.netty.buffer.ByteBuf;
-import io.pravega.logstore.client.internal.EntryAddress;
 import java.util.concurrent.CompletableFuture;
 import lombok.NonNull;
 

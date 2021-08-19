@@ -15,6 +15,7 @@
  */
 package io.pravega.logstore.client.internal;
 
+import io.pravega.logstore.client.Entry;
 import io.pravega.logstore.client.LogClientConfig;
 import io.pravega.logstore.client.LogInfo;
 import io.pravega.logstore.client.LogReader;

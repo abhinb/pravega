@@ -16,7 +16,7 @@
 package io.pravega.segmentstore.storage.impl.logstore;
 
 import com.google.common.base.Preconditions;
-import io.pravega.logstore.client.internal.EntryAddress;
+import io.pravega.logstore.client.EntryAddress;
 import io.pravega.segmentstore.storage.LogAddress;
 import lombok.Getter;
 

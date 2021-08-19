@@ -16,7 +16,6 @@
 package io.pravega.logstore.client;
 
 import io.pravega.common.util.AsyncIterator;
-import io.pravega.logstore.client.internal.Entry;
 import java.util.List;
 
 public interface LogReader extends AsyncIterator<List<Entry>>, AutoCloseable {

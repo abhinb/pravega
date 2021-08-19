@@ -15,6 +15,7 @@
  */
 package io.pravega.logstore.client.internal;
 
+import io.pravega.logstore.client.Entry;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import java.net.URI;
 import java.util.Collection;

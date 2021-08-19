@@ -370,19 +370,22 @@ public class TestConfig {
 
     @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
     public enum TestType {
-        SegmentStore(false),
-        SegmentStoreTable(true),
-        InProcessMock(false),
-        InProcessMockTable(true),
-        InProcessStore(false),
-        InProcessStoreTable(true),
-        AppendProcessor(false),
-        OutOfProcess(false),
-        External(false),
-        BookKeeper(false),
-        LogStore(false);
+        SegmentStore(false, false),
+        SegmentStoreLogService(false, true),
+        SegmentStoreTable(true, false),
+        InProcessMock(false, false),
+        InProcessMockTable(true, false),
+        InProcessStore(false, false),
+        InProcessStoreTable(true, false),
+        AppendProcessor(false, false),
+        OutOfProcess(false, false),
+        External(false, false),
+        BookKeeper(false, false),
+        LogStore(false, false);
         @Getter
         private final boolean tablesTest;
+        @Getter
+        private final boolean useLogStore;
     }
 
     public enum TableType {

@@ -18,6 +18,8 @@ package io.pravega.logstore.client.internal;
 import io.netty.buffer.ByteBuf;
 import io.pravega.common.Exceptions;
 import io.pravega.common.concurrent.Futures;
+import io.pravega.logstore.client.Entry;
+import io.pravega.logstore.client.EntryAddress;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import java.net.URI;
 import java.util.ArrayList;

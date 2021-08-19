@@ -237,6 +237,7 @@ public abstract class StoreAdapter extends AbstractIdleService implements AutoCl
         switch (testConfig.getTestType()) {
             case SegmentStore:
             case SegmentStoreTable:
+            case SegmentStoreLogService:
                 result = new SegmentStoreAdapter(testConfig, builderConfig, executor);
                 break;
             case AppendProcessor:

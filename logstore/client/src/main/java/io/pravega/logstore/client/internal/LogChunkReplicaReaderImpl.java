@@ -19,6 +19,8 @@ import com.google.common.base.Preconditions;
 import io.netty.buffer.ByteBuf;
 import io.pravega.common.ObjectClosedException;
 import io.pravega.common.concurrent.Futures;
+import io.pravega.logstore.client.Entry;
+import io.pravega.logstore.client.EntryAddress;
 import io.pravega.logstore.client.internal.connections.ClientConnection;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import io.pravega.logstore.shared.LogChunkReplicaCorruptedException;

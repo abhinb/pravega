@@ -243,8 +243,7 @@ public class LogStoreAdapter extends StoreAdapter {
                 .stdErr(ProcessBuilder.Redirect.to(new File(config.getComponentErrLogPath("logstore", 0))))
                 .start();
         Exceptions.handleInterrupted(() -> Thread.sleep(2000));
-        TestLogger.log(logId, "LogStore Service (Port %s) started.",
-                config.getBkPort(0));
+        TestLogger.log(logId, "LogStore Service (Port %s) started.", config.getBkPort(0));
         return p;
     }
 
@@ -253,7 +252,7 @@ public class LogStoreAdapter extends StoreAdapter {
     }
 
     @SneakyThrows
-    private static String getHostAddress() {
+    static String getHostAddress() {
         return Inet4Address.getLocalHost().getHostAddress();
     }
 }

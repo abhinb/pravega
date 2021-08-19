@@ -23,6 +23,7 @@ import io.pravega.common.concurrent.Futures;
 import io.pravega.common.io.FileHelpers;
 import io.pravega.common.util.AsyncIterator;
 import io.pravega.common.util.BufferView;
+import io.pravega.logstore.client.LogClientConfig;
 import io.pravega.segmentstore.contracts.AttributeId;
 import io.pravega.segmentstore.contracts.AttributeUpdate;
 import io.pravega.segmentstore.contracts.AttributeUpdateCollection;
@@ -45,6 +46,7 @@ import io.pravega.segmentstore.storage.StorageFactory;
 import io.pravega.segmentstore.storage.chunklayer.ChunkedSegmentStorageConfig;
 import io.pravega.segmentstore.storage.impl.bookkeeper.BookKeeperConfig;
 import io.pravega.segmentstore.storage.impl.bookkeeper.BookKeeperLogFactory;
+import io.pravega.segmentstore.storage.impl.logstore.LogStoreLogFactory;
 import io.pravega.segmentstore.storage.mocks.InMemoryDurableDataLogFactory;
 import io.pravega.shared.NameUtils;
 import io.pravega.shared.metrics.MetricsConfig;
@@ -57,6 +59,7 @@ import io.pravega.storage.filesystem.FileSystemStorageFactory;
 import io.pravega.test.integration.selftest.Event;
 import io.pravega.test.integration.selftest.TestConfig;
 import java.io.File;
+import java.net.URI;
 import java.time.Duration;
 import java.util.AbstractMap;
 import java.util.Collections;
@@ -74,6 +77,7 @@ import lombok.val;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.ExponentialBackoffRetry;
+import org.apache.curator.test.TestingServer;
 
 /**
  * Store Adapter wrapping a StreamSegmentStore directly. Every "Stream" is actually a single Segment. Routing keys are
@@ -88,7 +92,7 @@ class SegmentStoreAdapter extends StoreAdapter {
     private final TestConfig config;
     private final ServiceBuilderConfig builderConfig;
     private final ServiceBuilder serviceBuilder;
-    private final AtomicReference<SingletonStorageFactory> storageFactory;
+    private final AtomicReference<StorageFactory> storageFactory;
     private final AtomicReference<ScheduledExecutorService> storeExecutor;
     private final Thread stopBookKeeperProcess;
     private Process bookKeeperService;
@@ -96,6 +100,7 @@ class SegmentStoreAdapter extends StoreAdapter {
     private TableStore tableStore;
     private CuratorFramework zkClient;
     private StatsProvider statsProvider;
+    private TestingServer zkServer;
 
 
     //endregion
@@ -119,9 +124,10 @@ class SegmentStoreAdapter extends StoreAdapter {
                 .newInMemoryBuilder(builderConfig)
                 .withStorageFactory(setup -> {
                     // We use the Segment Store Executor for the real storage.
-                    SingletonStorageFactory factory = new SingletonStorageFactory(config.getStorageDir(),
-                            setup.getStorageExecutor(),
-                            testConfig.isChunkedSegmentStorageEnabled());
+                    FileSystemStorageConfig cfg = FileSystemStorageConfig.builder()
+                            .with(FileSystemStorageConfig.ROOT, config.getStorageDir())
+                            .build();
+                    FileSystemStorageFactory factory = new FileSystemStorageFactory(cfg, setup.getStorageExecutor());
                     this.storageFactory.set(factory);
 
                     // A bit hack-ish, but we need to get a hold of the Store Executor, so we can request snapshots for it.
@@ -133,24 +139,38 @@ class SegmentStoreAdapter extends StoreAdapter {
     }
 
     private ServiceBuilder attachDataLogFactory(ServiceBuilder builder) {
-        if (this.config.getBookieCount() > 0) {
+        if (this.config.getBookieCount() == 0) {
+            // No Bookies -> InMemory Tier1.
+            return builder.withDataLogFactory(setup -> new InMemoryDurableDataLogFactory(setup.getCoreExecutor()));
+        }
+
+        this.zkClient = CuratorFrameworkFactory
+                .builder()
+                .connectString("localhost:" + this.config.getZkPort())
+                .namespace("pravega")
+                .retryPolicy(new ExponentialBackoffRetry(1000, 5))
+                .sessionTimeoutMs(5000)
+                .connectionTimeoutMs(5000)
+                .build();
+        this.zkClient.start();
+
+        if (this.config.getTestType().isUseLogStore()) {
+            return builder.withDataLogFactory(setup -> {
+                LogClientConfig config = LogClientConfig.builder()
+                        .zkURL("localhost:" + this.config.getZkPort())
+                        .clientThreadPoolSize(10)
+                        .replicationFactor(1)
+                        .rolloverSizeBytes(1024 * 1024 * 1024)
+                        .build();
+                val logStoreURI = URI.create(String.format("tcp://%s:%s", LogStoreAdapter.getHostAddress(), this.config.getBkPort(0)));
+                return new LogStoreLogFactory(config, Collections.singletonList(logStoreURI));
+            });
+        } else {
             // We were instructed to start at least one Bookie.
-            this.zkClient = CuratorFrameworkFactory
-                    .builder()
-                    .connectString("localhost:" + this.config.getZkPort())
-                    .namespace("pravega")
-                    .retryPolicy(new ExponentialBackoffRetry(1000, 5))
-                    .sessionTimeoutMs(5000)
-                    .connectionTimeoutMs(5000)
-                    .build();
-            this.zkClient.start();
             return builder.withDataLogFactory(setup -> {
                 BookKeeperConfig bkConfig = setup.getConfig(BookKeeperConfig::builder);
                 return new BookKeeperLogFactory(bkConfig, this.zkClient, setup.getCoreExecutor());
             });
-        } else {
-            // No Bookies -> InMemory Tier1.
-            return builder.withDataLogFactory(setup -> new InMemoryDurableDataLogFactory(setup.getCoreExecutor()));
         }
     }
 
@@ -167,7 +187,15 @@ class SegmentStoreAdapter extends StoreAdapter {
         }
 
         if (this.config.getBookieCount() > 0) {
-            this.bookKeeperService = BookKeeperAdapter.startBookKeeperOutOfProcess(this.config, this.logId);
+            if (this.config.getTestType().isUseLogStore()) {
+                this.zkServer = new TestingServer(this.config.getZkPort(), true);
+                val logStoreURI = URI.create(String.format("tcp://%s:%s", LogStoreAdapter.getHostAddress(), this.config.getBkPort(0)));
+                this.bookKeeperService = LogStoreAdapter.startServer(this.config, logStoreURI, "test");
+            } else {
+                this.bookKeeperService = BookKeeperAdapter.startBookKeeperOutOfProcess(this.config, this.logId);
+            }
+        } else {
+            log(logId, "Running with in-memory DurableDataLog.");
         }
 
         this.serviceBuilder.initialize();
@@ -176,6 +204,7 @@ class SegmentStoreAdapter extends StoreAdapter {
     }
 
     @Override
+    @SneakyThrows
     protected void shutDown() {
         this.serviceBuilder.close();
         stopBookKeeper();
@@ -186,15 +215,20 @@ class SegmentStoreAdapter extends StoreAdapter {
             this.zkClient = null;
         }
 
+        val zkServer = this.zkServer;
+        if (zkServer != null) {
+            try {
+                zkServer.close();
+            } catch (Exception e) {
+
+            }
+            this.zkClient = null;
+        }
+
         StatsProvider sp = this.statsProvider;
         if (sp != null) {
             sp.close();
             this.statsProvider = null;
-        }
-
-        SingletonStorageFactory storageFactory = this.storageFactory.getAndSet(null);
-        if (storageFactory != null) {
-            storageFactory.close();
         }
 
         Runtime.getRuntime().removeShutdownHook(this.stopBookKeeperProcess);
