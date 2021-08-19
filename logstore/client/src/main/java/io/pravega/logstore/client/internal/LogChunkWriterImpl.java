@@ -16,12 +16,14 @@
 package io.pravega.logstore.client.internal;
 
 import io.netty.buffer.ByteBuf;
+import io.pravega.common.Exceptions;
 import io.pravega.common.concurrent.Futures;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
@@ -39,6 +41,7 @@ public class LogChunkWriterImpl implements LogChunkWriter {
     private final String traceLogId;
     private final List<LogChunkWriter> replicaWriters;
     private final AtomicLong length;
+    private volatile boolean sealed;
 
     public LogChunkWriterImpl(long logId, long chunkId, int replicaCount, @NonNull LogServerManager logServerManager,
                               @NonNull Executor executor) {
@@ -49,6 +52,7 @@ public class LogChunkWriterImpl implements LogChunkWriter {
                 .map(uri -> new LogChunkReplicaWriterImpl(logId, chunkId, uri, executor))
                 .collect(Collectors.toList());
         this.length = new AtomicLong(0L);
+        this.sealed = false;
     }
 
     @Override
@@ -93,6 +97,9 @@ public class LogChunkWriterImpl implements LogChunkWriter {
 
     @Override
     public CompletableFuture<Void> addEntry(Entry entry) {
+        if (this.sealed) {
+            throw new LogChunkSealedException(this.chunkId);
+        }
         this.length.addAndGet(entry.getLength());
         val futures = new ArrayList<CompletableFuture<Void>>(this.replicaWriters.size());
         for (val w : this.replicaWriters) {
@@ -101,11 +108,35 @@ public class LogChunkWriterImpl implements LogChunkWriter {
 
         val result = Futures.allOf(futures);
         result.exceptionally(ex -> {
-            log.error("{}: addEntry failure. Closing.", this.traceLogId, ex);
+            this.length.addAndGet(-entry.getLength());
+            ex = Exceptions.unwrap(ex);
+            if (ex instanceof CancellationException) {
+                log.warn("{}: addEntry [{}] cancelled. Closing.", this.traceLogId, entry);
+            } else {
+                log.error("{}: addEntry [{}] failure. Closing.", this.traceLogId, entry, ex);
+            }
             close();
             return null;
         });
         return result;
+    }
+
+    @Override
+    public CompletableFuture<Void> seal() {
+        this.sealed = true;
+        val futures = new ArrayList<CompletableFuture<Void>>(this.replicaWriters.size());
+        for (val w : this.replicaWriters) {
+            futures.add(w.seal());
+        }
+
+        return Futures.allOf(futures)
+                .handle((r, ex) -> {
+                    if (ex != null) {
+                        log.error("{}: seal failure.", this.traceLogId, ex);
+                    }
+                    close();
+                    return null;
+                });
     }
 
     @Override

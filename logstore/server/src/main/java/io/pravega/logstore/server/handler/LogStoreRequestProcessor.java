@@ -44,6 +44,7 @@ import io.pravega.logstore.shared.protocol.commands.SealChunk;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -214,6 +215,10 @@ public class LogStoreRequestProcessor implements RequestProcessor {
     }
 
     private void logError(long requestId, long chunkId, String operation, Throwable u) {
-        log.error(requestId, "Error (LogChunkId = '{}', Operation = '{}')", chunkId, operation, u);
+        if (u instanceof CancellationException) {
+            log.warn(requestId, "Cancelled (LogChunkId = '{}', Operation = '{}')", chunkId, operation);
+        } else {
+            log.error(requestId, "Error (LogChunkId = '{}', Operation = '{}')", chunkId, operation, u);
+        }
     }
 }

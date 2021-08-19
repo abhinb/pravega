@@ -15,12 +15,14 @@
  */
 package io.pravega.logstore.server.service;
 
+import io.pravega.common.concurrent.Futures;
 import io.pravega.logstore.server.ChunkEntry;
 import io.pravega.logstore.server.ChunkInfo;
 import io.pravega.logstore.server.LogStoreConfig;
 import io.pravega.logstore.server.chunks.ChunkReplicaManager;
 import io.pravega.logstore.server.chunks.ChunkReplicaReader;
 import io.pravega.logstore.shared.LogChunkNotExistsException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -52,18 +54,19 @@ public class LogStoreService {
 
     public CompletableFuture<Void> sealChunks(Collection<Long> chunkIds) {
         log.info("Seal Chunks {}", chunkIds);
-        return CompletableFuture.runAsync(() -> {
-            for (val chunkId : chunkIds) {
-                try {
-                    log.info("Seal Chunk {}", chunkId);
-                    val writer = this.manager.getWriter(chunkId);
-                    writer.close();
-                } catch (LogChunkNotExistsException ex) {
-                    log.debug("Not sealing chunk {} because no writer could be found for it.", chunkId);
-                    continue;
-                }
+        val futures = new ArrayList<CompletableFuture<Void>>();
+        for (val chunkId : chunkIds) {
+            try {
+                log.info("Seal Chunk {}", chunkId);
+                val writer = this.manager.getWriter(chunkId);
+                futures.add(writer.stopAndClose());
+            } catch (LogChunkNotExistsException ex) {
+                log.debug("Not sealing chunk {} because no writer could be found for it.", chunkId);
+                continue;
             }
-        }, this.writeExecutor);
+        }
+
+        return Futures.allOf(futures);
     }
 
     public CompletableFuture<Long> appendEntry(@NonNull ChunkEntry entry) {

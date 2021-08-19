@@ -18,25 +18,17 @@ package io.pravega.logstore.client.internal;
 import com.google.common.base.Preconditions;
 import io.netty.buffer.ByteBuf;
 import io.pravega.common.Exceptions;
-import io.pravega.common.ObjectBuilder;
 import io.pravega.common.ObjectClosedException;
 import io.pravega.common.concurrent.Futures;
-import io.pravega.common.io.serialization.RevisionDataInput;
-import io.pravega.common.io.serialization.RevisionDataOutput;
-import io.pravega.common.io.serialization.VersionedSerializer;
 import io.pravega.common.util.RetriesExhaustedException;
 import io.pravega.common.util.Retry;
 import io.pravega.logstore.client.LogClientConfig;
 import io.pravega.logstore.client.LogInfo;
+import io.pravega.logstore.client.LogReader;
 import io.pravega.logstore.client.LogWriter;
 import io.pravega.logstore.client.QueueStatistics;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import io.pravega.logstore.shared.LogChunkExistsException;
-import java.io.IOException;
-import java.net.URI;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -44,8 +36,6 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import lombok.Builder;
-import lombok.Data;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -65,7 +55,6 @@ public class LogWriterImpl implements LogWriter {
     private final SequentialAsyncProcessor writeProcessor;
     private final AtomicBoolean closed;
     private final AtomicReference<LogMetadata> metadata;
-    private final String metadataPath;
 
     public LogWriterImpl(long logId, @NonNull LogClientConfig config, @NonNull LogServerManager logServerManager,
                          @NonNull MetadataManager metadataManager, @NonNull ClientConnectionFactory connectionFactory) {
@@ -80,7 +69,6 @@ public class LogWriterImpl implements LogWriter {
         val retry = createRetryPolicy(this.config.getMaxWriteAttempts(), this.config.getWriteTimeoutMillis());
         this.writeProcessor = new SequentialAsyncProcessor(this::processWritesSync, retry, this::handleWriteProcessorFailures, getExecutor());
         this.closed = new AtomicBoolean(false);
-        this.metadataPath = String.format("/%s/%s", LogMetadata.PATH, logId);
         this.traceLogId = String.format("LogWriter[%s]", this.logId);
     }
 
@@ -99,17 +87,21 @@ public class LogWriterImpl implements LogWriter {
 
     @Override
     public LogInfo getInfo() {
+        Exceptions.checkNotClosed(this.closed.get(), this);
         val m = this.metadata.get();
-        return new LogInfo(this.logId, this.metadata.get().getChunks().size(), m.getEpoch());
+        return new LogInfo(this.logId, m.getChunks().size(), m.getEpoch());
     }
 
     @Override
     public CompletableFuture<Void> initialize() {
+        Exceptions.checkNotClosed(this.closed.get(), this);
+
         // 1. Fetch metadata.
-        this.metadata.set(this.metadataManager.get(this.metadataPath, LogMetadata.SERIALIZER::deserialize, LogMetadata.empty()));
+        this.metadata.set(this.metadataManager.get(LogMetadata.getPath(this.logId), LogMetadata.SERIALIZER::deserialize, LogMetadata.empty(this.logId)));
         updateMetadata(this.metadata.get().newEpoch());
 
         // 2. (TBD - not done yet) Get all existing chunks and seal/fence them.
+        // There are commands for it available (SealChunk).
 
         // 3. Create new chunk.
         return rollover();
@@ -117,6 +109,7 @@ public class LogWriterImpl implements LogWriter {
 
     @Override
     public CompletableFuture<EntryAddress> append(@NonNull ByteBuf data) {
+        Exceptions.checkNotClosed(this.closed.get(), this);
         val activeWriter = getActiveChunk();
         Preconditions.checkState(activeWriter != null, "Not initialized.");
         val entry = new PendingAddEntry(data, 0);
@@ -140,6 +133,13 @@ public class LogWriterImpl implements LogWriter {
     @Override
     public QueueStatistics getQueueStatistics() {
         return this.writeQueue.getStatistics();
+    }
+
+    @Override
+    public LogReader getReader() {
+        Exceptions.checkNotClosed(this.closed.get(), this);
+        Preconditions.checkState(getActiveChunk() != null, "Not initialized.");
+        return new LogReaderImpl(this.metadata.get(), this.config, this.connectionFactory);
     }
 
     private WriteChunk getActiveChunk() {
@@ -238,6 +238,7 @@ public class LogWriterImpl implements LogWriter {
                 }
 
                 // Invoke the BookKeeper write.
+                entry.assignEntryId();
                 entry.getWriteChunk().getWriter().addEntry(entry)
                         .whenComplete((r, ex) -> addCallback(entry, ex));
             } catch (Throwable ex) {
@@ -331,17 +332,18 @@ public class LogWriterImpl implements LogWriter {
 
         log.info("{}: Rolling over.", this.traceLogId);
         return createNextChunk()
-                .thenAccept(newWriter -> {
+                .thenComposeAsync(newWriter -> {
                     val currentChunk = this.activeChunk.getAndSet(new WriteChunk(newWriter));
-                    try {
-                        if (currentChunk != null) {
-                            currentChunk.markRolledOver();
+                    if (currentChunk != null) {
+                        try {
+                            return currentChunk.seal();
+                        } catch (Throwable ex) {
+                            newWriter.close();
+                            throw ex;
                         }
-                    } catch (Throwable ex) {
-                        newWriter.close();
-                        throw ex;
                     }
-                })
+                    return CompletableFuture.completedFuture(null);
+                }, getExecutor())
                 .exceptionally(this::handleRolloverFailure)
                 .thenRunAsync(this.writeProcessor::runAsync, getExecutor());
     }
@@ -382,7 +384,7 @@ public class LogWriterImpl implements LogWriter {
     }
 
     private void updateMetadata(LogMetadata m) {
-        if (this.metadataManager.set(m, this.metadataPath, LogMetadata.SERIALIZER::serialize)) {
+        if (this.metadataManager.set(m, m.getPath(), LogMetadata.SERIALIZER::serialize)) {
             this.metadata.set(m);
         } else {
             throw new CompletionException(new Exception("Unable to persist metadata in ZK."));
@@ -400,7 +402,9 @@ public class LogWriterImpl implements LogWriter {
 
     private static boolean isRetryable(Throwable ex) {
         ex = Exceptions.unwrap(ex);
-        return ex instanceof CancellationException || ex instanceof ObjectClosedException;
+        return ex instanceof CancellationException
+                || ex instanceof ObjectClosedException
+                || ex instanceof LogChunkSealedException;
     }
 
     private void handleWriteProcessorFailures(Throwable exception) {
@@ -433,78 +437,5 @@ public class LogWriterImpl implements LogWriter {
 
     private ScheduledExecutorService getExecutor() {
         return this.connectionFactory.getInternalExecutor();
-    }
-
-    @Data
-    private static class ChunkMetadata {
-        private final long chunkId;
-        private final Collection<URI> locations;
-    }
-
-    @Getter
-    @Builder
-    private static class LogMetadata extends VersionedMetadata {
-        static final String PATH = "LogMetadata";
-        private static final Serializer SERIALIZER = new Serializer();
-        private final long epoch;
-        private final List<ChunkMetadata> chunks;
-
-        static LogMetadata empty() {
-            return new LogMetadata(0L, Collections.emptyList());
-        }
-
-        LogMetadata addChunk(long chunkId, Collection<URI> locations) {
-            val newChunks = new ArrayList<>(this.chunks);
-            newChunks.add(new ChunkMetadata(chunkId, locations));
-            val result = new LogMetadata(this.epoch, newChunks);
-            result.setVersion(this.getVersion());
-            return result;
-        }
-
-        LogMetadata newEpoch() {
-            return new LogMetadata(this.epoch + 1, this.chunks);
-        }
-
-        public static class LogMetadataBuilder implements ObjectBuilder<LogMetadata> {
-
-        }
-
-        private static class Serializer extends VersionedSerializer.WithBuilder<LogMetadata, LogMetadataBuilder> {
-            @Override
-            protected LogMetadataBuilder newBuilder() {
-                return builder();
-            }
-
-            @Override
-            protected byte getWriteVersion() {
-                return 0;
-            }
-
-            @Override
-            protected void declareVersions() {
-                version(0).revision(0, this::write00, this::read00);
-            }
-
-            private void write00(LogMetadata e, RevisionDataOutput target) throws IOException {
-                target.writeLong(e.epoch);
-                target.writeCollection(e.chunks, this::writeChunk00);
-            }
-
-            private void read00(RevisionDataInput source, LogMetadataBuilder b) throws IOException {
-                b.epoch(source.readLong());
-                b.chunks(source.readCollection(this::readChunk00, ArrayList::new));
-            }
-
-            private void writeChunk00(RevisionDataOutput target, ChunkMetadata c) throws IOException {
-                target.writeLong(c.chunkId);
-                target.writeCollection(c.locations, (t, uri) -> t.writeUTF(uri.toString()));
-            }
-
-            private ChunkMetadata readChunk00(RevisionDataInput source) throws IOException {
-                val chunkId = source.readLong();
-                val locations = source.readCollection(s -> URI.create(s.readUTF()), ArrayList::new);
-                return new ChunkMetadata(chunkId, locations);
-            }
-        }
     }
 }

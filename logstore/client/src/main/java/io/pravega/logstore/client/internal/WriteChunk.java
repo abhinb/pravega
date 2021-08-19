@@ -15,6 +15,7 @@
  */
 package io.pravega.logstore.client.internal;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -23,12 +24,12 @@ import lombok.RequiredArgsConstructor;
 @Getter
 public class WriteChunk {
     private final LogChunkWriter writer;
-    private volatile boolean rolledOver;
+    private volatile boolean sealed;
     private final AtomicLong nextEntryId = new AtomicLong(0);
 
-    void markRolledOver() {
-        this.rolledOver = true;
-        this.writer.close();
+    CompletableFuture<Void> seal() {
+        this.sealed = true;
+        return this.writer.seal();
     }
 
     long getNextEntryId() {

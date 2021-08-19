@@ -57,6 +57,7 @@ public class ChunkReplicaWriter implements AutoCloseable {
     private final AtomicLong entryCount;
     @Setter
     private volatile Runnable onClose;
+    private volatile boolean stopped;
 
     ChunkReplicaWriter(long chunkId, @NonNull LogStoreConfig config, @NonNull ScheduledExecutorService executorService) {
         this.chunkId = chunkId;
@@ -69,6 +70,7 @@ public class ChunkReplicaWriter implements AutoCloseable {
         this.closed = new AtomicBoolean(false);
         this.executorService = executorService;
         this.runner = new AtomicReference<>();
+        this.stopped = false;
     }
 
     @Override
@@ -99,7 +101,7 @@ public class ChunkReplicaWriter implements AutoCloseable {
                 log.error("{}: Unable to write metadata.", this.traceLogId, ex);
             }
 
-            log.info("Closed.");
+            log.info("{}: Closed.", this.traceLogId);
             val toRun = this.onClose;
             if (toRun != null) {
                 this.executorService.execute(toRun);
@@ -121,6 +123,14 @@ public class ChunkReplicaWriter implements AutoCloseable {
                 .exceptionally(this::handleError));
     }
 
+    public CompletableFuture<Void> stopAndClose() {
+        Preconditions.checkState(this.runner.get() != null, "Not started.");
+        val write = PendingWrite.terminal();
+        log.debug("{}: append-terminal.", this.traceLogId);
+        this.writeQueue.add(write); // this will throw ObjectClosedException if we are closed.
+        return Futures.toVoid(write.getCompletion()).thenRun(this::close);
+    }
+
     public CompletableFuture<Long> append(@NonNull ChunkEntry entry) {
         Preconditions.checkState(this.runner.get() != null, "Not started.");
         val write = new PendingWrite(entry, DATA_FORMAT);
@@ -135,6 +145,15 @@ public class ChunkReplicaWriter implements AutoCloseable {
         try {
             while (!writes.isEmpty()) {
                 val write = writes.poll();
+                if (write.isTerminal() || this.stopped) {
+                    // Last write - flush what we have and close.
+                    this.stopped = true;
+                    flushBatch(batch);
+                    cancelIncompleteWrites(writes, new CancellationException());
+                    write.complete();
+                    break;
+                }
+
                 try {
                     // Assign offset.
                     write.setOffset(batch.getOffset() + batch.getLength());
@@ -179,6 +198,11 @@ public class ChunkReplicaWriter implements AutoCloseable {
     }
 
     private void flushBatch(WriteBatch writeBatch) throws IOException {
+        if (writeBatch.isEmpty()) {
+            // Nothing to do.
+            return;
+        }
+
         // 1. Flush to data file. This call syncs to disk.
         this.dataWriter.append(writeBatch.get(), writeBatch.getOffset());
         log.debug("{}: Flushed {}.", this.traceLogId, writeBatch);
@@ -238,16 +262,20 @@ public class ChunkReplicaWriter implements AutoCloseable {
             return String.format("Offset=%s, Length=%s, EntryIds=[%s-%s]", this.offset, this.length, getFirstEntryId(), getLastEntryId());
         }
 
+        boolean isEmpty() {
+            return this.length == 0 && this.buffers.isEmpty() && this.writes.isEmpty();
+        }
+
+        boolean isFull() {
+            return this.remainingCapacity <= 0;
+        }
+
         Long getFirstEntryId() {
             return this.writes.isEmpty() ? null : this.writes.get(0).getEntryId();
         }
 
         Long getLastEntryId() {
             return this.writes.isEmpty() ? null : this.writes.get(this.writes.size() - 1).getEntryId();
-        }
-
-        boolean isFull() {
-            return this.remainingCapacity <= 0;
         }
 
         ByteBuf get() {

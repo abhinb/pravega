@@ -31,6 +31,8 @@ public interface LogWriter extends AutoCloseable {
 
     QueueStatistics getQueueStatistics();
 
+    LogReader getReader(); // A bit odd, but we only allow reading owned logs (do not support reads while writing from other clients).
+
     @Override
     void close();
 }

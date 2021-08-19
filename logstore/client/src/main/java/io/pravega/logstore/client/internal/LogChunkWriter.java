@@ -35,6 +35,8 @@ public interface LogChunkWriter extends AutoCloseable {
 
     CompletableFuture<Void> addEntry(Entry entry);
 
+    CompletableFuture<Void> seal(); // Seals and closes.
+
     @Override
     void close();
 }

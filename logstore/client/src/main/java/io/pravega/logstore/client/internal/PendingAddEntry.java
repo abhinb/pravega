@@ -54,7 +54,11 @@ public class PendingAddEntry implements Entry, AutoCloseable {
 
     public void setWriter(WriteChunk wc) {
         this.writeChunk = wc;
-        this.entryId = wc.getNextEntryId();
+        this.entryId = Long.MIN_VALUE;
+    }
+
+    public void assignEntryId() {
+        this.entryId = this.writeChunk.getNextEntryId();
     }
 
     /**
@@ -125,7 +129,7 @@ public class PendingAddEntry implements Entry, AutoCloseable {
 
         endAttempt();
         WriteChunk chunk = this.writeChunk;
-        if (chunk != null && chunk.isRolledOver()) {
+        if (chunk != null && chunk.isSealed()) {
             // Rollovers aren't really failures (they're caused by us). In that case, do not count this failure as an attempt.
             this.attemptCount.updateAndGet(v -> Math.max(0, v - 1));
         }

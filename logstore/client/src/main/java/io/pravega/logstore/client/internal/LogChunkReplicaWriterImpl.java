@@ -22,9 +22,11 @@ import io.pravega.logstore.client.internal.connections.ClientConnection;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import io.pravega.logstore.shared.protocol.commands.AppendEntry;
 import io.pravega.logstore.shared.protocol.commands.ChunkCreated;
+import io.pravega.logstore.shared.protocol.commands.ChunkSealed;
 import io.pravega.logstore.shared.protocol.commands.CreateChunk;
 import io.pravega.logstore.shared.protocol.commands.EntryAppended;
 import io.pravega.logstore.shared.protocol.commands.EntryData;
+import io.pravega.logstore.shared.protocol.commands.SealChunk;
 import java.net.URI;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -41,7 +43,6 @@ import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
-import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 
@@ -50,18 +51,29 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
     @Getter
     private final long chunkId;
     private final URI logStoreUri;
-    private volatile ClientConnection connection;
     private final Executor executor;
-    private final State state;
-    private final Object writeOrderLock = new Object();
+    private final Object lock = new Object();
     private final String traceLogId;
+    private final AtomicLong length = new AtomicLong(0);
+    private final CompletableFuture<Void> initialized;
+    private volatile ClientConnection connection;
+    @Getter
+    private volatile boolean closed = false;
+    @GuardedBy("lock")
+    private final ArrayDeque<PendingChunkReplicaEntry> pending = new ArrayDeque<>();
+    @GuardedBy("lock")
+    private long nextExpectedEntryId = 0;
+    @GuardedBy("lock")
+    private long lastAckedEntryId;
+    @GuardedBy("lock")
+    private CompletableFuture<Void> sealed;
 
     public LogChunkReplicaWriterImpl(long logId, long chunkId, @NonNull URI logStoreUri,
                                      @NonNull Executor executor) {
         this.chunkId = chunkId;
         this.logStoreUri = logStoreUri;
         this.executor = executor;
-        this.state = new State();
+        this.initialized = new CompletableFuture<>();
         this.traceLogId = String.format("ChunkWriter[%s-%s-%s:%s]", logId, chunkId, logStoreUri.getHost(), logStoreUri.getPort());
     }
 
@@ -76,31 +88,31 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
                     })
                     .whenComplete((r, ex) -> {
                         if (ex != null) {
-                            state.fail(ex);
-                            close();
+                            failAndClose(ex);
                         }
                     });
-            return state.initialized;
+            return this.initialized;
         } catch (Throwable ex) {
-            state.fail(ex);
-            close();
+            failAndClose(ex);
             return Futures.failedFuture(ex);
         }
     }
 
     @Override
     public long getLastAckedEntryId() {
-        return this.state.getLastAckedEntryId();
+        synchronized (lock) {
+            return this.lastAckedEntryId;
+        }
     }
 
     @Override
     public long getLength() {
-        return this.state.length.get();
+        return this.length.get();
     }
 
     @Override
     public boolean isSealed() {
-        return this.state.isClosed();
+        return this.closed;
     }
 
     @Override
@@ -111,23 +123,34 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
     @SneakyThrows
     private void createLogChunk() {
         val cc = new CreateChunk(0L, this.chunkId);
-        connection.send(cc);
+        this.connection.send(cc);
     }
 
     @Override
     public CompletableFuture<Void> addEntry(Entry entry) {
-        Exceptions.checkNotClosed(this.state.isClosed(), this);
-        Preconditions.checkState(this.state.isInitialized(), "Not initialized.");
+        Exceptions.checkNotClosed(this.closed, this);
+        Preconditions.checkState(isInitialized(), "Not initialized.");
         Preconditions.checkArgument(entry.getAddress().getChunkId() == this.chunkId);
 
-        synchronized (writeOrderLock) {
+        synchronized (this.lock) {
             try {
-                val connection = this.connection;
+                if (this.sealed != null) {
+                    throw new LogChunkSealedException(this.chunkId);
+                }
+                Preconditions.checkArgument(entry.getAddress().getEntryId() == this.nextExpectedEntryId,
+                        "Unexpected EntryId. Expected %s, given %s.", this.nextExpectedEntryId, entry.getAddress().getEntryId());
+
+                // We only send if not already sealed.
                 val entryData = new EntryData(entry.getAddress().getEntryId(), entry.getCrc32(), entry.getData());
                 val ae = new AppendEntry(entry.getAddress().getChunkId(), entryData);
                 log.trace("{}: Sending AppendEntry: {}", this, ae);
-                connection.send(ae);
-                return state.addPending(entry);
+                this.connection.send(ae);
+
+                val pe = new PendingChunkReplicaEntry(entry);
+                this.pending.addLast(pe);
+                this.nextExpectedEntryId++;
+                this.length.addAndGet(entry.getLength());
+                return pe.completion;
             } catch (Throwable ex) {
                 log.error("{}: Failed to add new entry {}. ", this.traceLogId, entry, ex);
                 return Futures.failedFuture(ex);
@@ -136,12 +159,42 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
     }
 
     @Override
-    public void close() {
-        state.close();
-        val connection = this.connection;
-        if (connection != null) {
-            connection.close();
+    public CompletableFuture<Void> seal() {
+        Exceptions.checkNotClosed(this.closed, this);
+        Preconditions.checkState(isInitialized(), "Not initialized.");
+
+        synchronized (this.lock) {
+            if (this.sealed != null) {
+                return this.sealed;
+            }
+            try {
+                this.sealed = new CompletableFuture<>();
+                val connection = this.connection;
+                val seal = new SealChunk(0L, this.chunkId);
+                log.trace("{}: Sending SealChunk: {}", this, seal);
+                connection.send(seal);
+                return this.sealed;
+            } catch (Throwable ex) {
+                log.error("{}: Failed to seal.", this.traceLogId, ex);
+                return Futures.failedFuture(ex);
+            }
         }
+    }
+
+    @Override
+    public void close() {
+        if (!this.closed) {
+            fail(new CancellationException("Closing."));
+            val connection = this.connection;
+            if (connection != null) {
+                connection.close();
+            }
+        }
+    }
+
+    private void failAndClose(Throwable ex) {
+        fail(ex);
+        close();
     }
 
     @Override
@@ -149,129 +202,73 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
         return this.traceLogId;
     }
 
-    private void failAndClose(Throwable ex) {
-        this.state.fail(ex);
-        close();
+    private boolean isInitialized() {
+        return this.initialized.isDone();
     }
 
-    //region State
-
-    @ToString(of = {"closed", "nextExpectedEntryId", "lastAckedEntryId"})
-    @RequiredArgsConstructor
-    private final class State implements AutoCloseable {
-        private final Object lock = new Object();
-        @Getter
-        private volatile boolean closed = false;
-        @GuardedBy("lock")
-        private final ArrayDeque<PendingChunkReplicaEntry> pending = new ArrayDeque<>();
-        @GuardedBy("lock")
-        private long nextExpectedEntryId = 0;
-        @GuardedBy("lock")
-        private long lastAckedEntryId;
-        private final AtomicLong length = new AtomicLong(0);
-        private final CompletableFuture<Void> initialized = new CompletableFuture<>();
-
-        boolean isInitialized() {
-            return this.initialized.isDone();
+    /**
+     * @param ex Error that has occurred that needs to be handled by tearing down the connection.
+     */
+    private void fail(Throwable ex) {
+        log.debug("{}: Handling exception {}.", traceLogId, ex.toString());
+        this.closed = true;
+        List<PendingChunkReplicaEntry> pending;
+        CompletableFuture<Void> sealCallback;
+        synchronized (lock) {
+            pending = new ArrayList<>(this.pending);
+            this.pending.clear();
+            sealCallback = this.sealed;
         }
 
-        @Override
-        public void close() {
-            if (!this.closed) {
-                fail(new CancellationException("Closing."));
+        executor.execute(() -> {
+            this.initialized.completeExceptionally(ex);
+            for (PendingChunkReplicaEntry toAck : pending) {
+                toAck.completion.completeExceptionally(ex);
             }
-        }
 
-        private long getNextExpectedEntryId() {
-            synchronized (lock) {
-                return this.nextExpectedEntryId;
+            if (sealCallback != null) {
+                sealCallback.completeExceptionally(ex);
             }
-        }
-
-        private long getLastAckedEntryId() {
-            synchronized (lock) {
-                return this.lastAckedEntryId;
-            }
-        }
-
-        /**
-         * @param ex Error that has occurred that needs to be handled by tearing down the connection.
-         */
-        void fail(Throwable ex) {
-            log.info("{}: Handling exception {}.", traceLogId, ex.toString());
-            this.closed = true;
-            val pending = removeAllPending();
-            executor.execute(() -> {
-                this.initialized.completeExceptionally(ex);
-                for (PendingChunkReplicaEntry toAck : pending) {
-                    toAck.completion.complete(null);
-                }
-            });
-        }
-
-        void ackUpTo(long lastAckedEntryId) {
-            final List<PendingChunkReplicaEntry> pendingEntries = removePending(lastAckedEntryId);
-            // Complete the futures and release buffer in a different thread.
-            executor.execute(() -> {
-                for (PendingChunkReplicaEntry toAck : pendingEntries) {
-                    toAck.completion.complete(null);
-                }
-            });
-        }
-
-        /**
-         * Add event to the infight
-         *
-         * @return The EventNumber for the event.
-         */
-        private CompletableFuture<Void> addPending(Entry entry) {
-            val pe = new PendingChunkReplicaEntry(entry);
-            synchronized (lock) {
-                Preconditions.checkArgument(entry.getAddress().getEntryId() == this.nextExpectedEntryId,
-                        "Unexpected EntryId. Expected %s, given %s.", this.nextExpectedEntryId, entry.getAddress().getEntryId());
-                log.trace("{}: Adding {} to inflight.", traceLogId, entry);
-                pending.addLast(pe);
-                this.nextExpectedEntryId++;
-            }
-            this.length.addAndGet(entry.getLength());
-            return pe.completion;
-        }
-
-        /**
-         * Remove all events with event numbers below the provided level from inflight and return them.
-         */
-        private List<PendingChunkReplicaEntry> removePending(long upToEntryId) {
-            synchronized (lock) {
-                List<PendingChunkReplicaEntry> result = new ArrayList<>();
-                PendingChunkReplicaEntry entry = pending.peekFirst();
-                while (entry != null && entry.entry.getAddress().getEntryId() <= upToEntryId) {
-                    pending.pollFirst();
-                    result.add(entry);
-                    entry = pending.peekFirst();
-                }
-
-                this.lastAckedEntryId = upToEntryId;
-                return result;
-            }
-        }
-
-        private List<PendingChunkReplicaEntry> removeAllPending() {
-            synchronized (lock) {
-                List<PendingChunkReplicaEntry> pending = new ArrayList<>(this.pending);
-                this.pending.clear();
-                return pending;
-            }
-        }
-
-        private Long getLowestPendingEntryId() {
-            synchronized (lock) {
-                PendingChunkReplicaEntry entry = pending.peekFirst();
-                return entry == null ? null : entry.entry.getAddress().getEntryId();
-            }
-        }
+        });
     }
 
-    //endregion
+    private void ackUpTo(long lastAckedEntryId) {
+        final List<PendingChunkReplicaEntry> pendingEntries = new ArrayList<>();
+        CompletableFuture<Void> sealCallback;
+        synchronized (lock) {
+            PendingChunkReplicaEntry entry = pending.peekFirst();
+            while (entry != null && entry.entry.getAddress().getEntryId() <= lastAckedEntryId) {
+                pending.pollFirst();
+                pendingEntries.add(entry);
+                entry = pending.peekFirst();
+            }
+
+            this.lastAckedEntryId = lastAckedEntryId;
+            sealCallback = pending.isEmpty() ? this.sealed : null;
+        }
+
+        // Complete the futures and release buffer in a different thread.
+        executor.execute(() -> {
+            for (PendingChunkReplicaEntry toAck : pendingEntries) {
+                toAck.completion.complete(null);
+            }
+
+            if (sealCallback != null) {
+                sealCallback.complete(null);
+                close();
+            }
+        });
+    }
+
+    private void sealComplete() {
+        CompletableFuture<Void> sealCallback;
+        synchronized (this.lock) {
+            sealCallback = this.pending.isEmpty() ? this.sealed : null;
+        }
+        if (sealCallback != null) {
+            sealCallback.complete(null);
+        }
+    }
 
     //region ResponseProcessor
 
@@ -283,17 +280,23 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
         @Override
         public void chunkCreated(ChunkCreated chunkCreated) {
             log.info("{}: Log Chunk Replica created.", traceLogId);
-            state.initialized.complete(null);
+            initialized.complete(null);
         }
 
         @Override
         public void entryAppended(EntryAppended entryAppended) {
             log.trace("{}: Ack Entry Id {}.", traceLogId, entryAppended.getUpToEntryId());
             try {
-                state.ackUpTo(entryAppended.getUpToEntryId());
+                ackUpTo(entryAppended.getUpToEntryId());
             } catch (Exception e) {
                 failConnection(e);
             }
+        }
+
+        @Override
+        public void chunkSealed(ChunkSealed reply) {
+            log.info("{}: Log Chunk Replica Sealed.", traceLogId);
+            sealComplete();
         }
     }
 

@@ -64,8 +64,9 @@ public class LogChunkReplicaReaderImpl implements LogChunkReader {
         this.state = new State();
     }
 
+    @Override
     public CompletableFuture<Void> initialize(@NonNull ClientConnectionFactory connectionFactory) {
-        Preconditions.checkState(this.state.connection == null, "Already initialized.");
+        Preconditions.checkState(this.state.connection.get() == null, "Already initialized.");
         try {
             connectionFactory.establishConnection(this.logStoreUri, this.responseProcessor)
                     .thenAccept(connection -> {
@@ -124,7 +125,7 @@ public class LogChunkReplicaReaderImpl implements LogChunkReader {
     }
 
     private void ensureInitialized() {
-        Preconditions.checkState(this.state.connection != null, "Not initialized.");
+        Preconditions.checkState(this.state.connection.get() != null, "Not initialized.");
     }
 
     @Override

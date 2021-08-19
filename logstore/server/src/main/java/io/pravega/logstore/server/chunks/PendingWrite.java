@@ -29,9 +29,22 @@ class PendingWrite {
     private volatile long offset = -1L;
     private final CompletableFuture<Long> completion = new CompletableFuture<>();
 
+    private PendingWrite() {
+        this.entryId = -1L;
+        this.data = null;
+    }
+
     PendingWrite(ChunkEntry entry, DataFormat dataFormat) {
         this.entryId = entry.getEntryId();
         this.data = dataFormat.serialize(entry);
+    }
+
+    static PendingWrite terminal() {
+        return new PendingWrite();
+    }
+
+    boolean isTerminal() {
+        return this.data == null;
     }
 
     void slice(int fromOffset) {

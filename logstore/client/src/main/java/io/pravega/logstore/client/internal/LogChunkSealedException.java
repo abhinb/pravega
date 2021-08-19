@@ -15,25 +15,8 @@
  */
 package io.pravega.logstore.client.internal;
 
-import io.pravega.common.util.AsyncIterator;
-import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
-import java.net.URI;
-import java.util.Collection;
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import lombok.NonNull;
-
-public interface LogChunkReader extends AsyncIterator<List<Entry>>, AutoCloseable {
-    long getChunkId();
-
-    long getEntryCount();
-
-    long getLength();
-
-    CompletableFuture<Void> initialize(@NonNull ClientConnectionFactory connectionFactory);
-
-    Collection<URI> getReplicaURIs();
-
-    @Override
-    void close();
+class LogChunkSealedException extends RuntimeException {
+    LogChunkSealedException(long chunkId) {
+        super(String.format("Log Chunk %s is sealed.", chunkId));
+    }
 }
