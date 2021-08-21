@@ -324,6 +324,9 @@ public class FileSystemStorage implements SyncStorage {
     }
 
     private Void doWrite(SegmentHandle handle, long offset, InputStream data, int length) throws IOException, StreamSegmentException {
+        if (!handle.getSegmentName().startsWith("_system")) {
+            return null;
+        }
         long traceId = LoggerHelpers.traceEnter(log, "write", handle.getSegmentName(), offset, length);
         Timer timer = new Timer();
 

@@ -234,11 +234,12 @@ public class LogStoreAdapter extends StoreAdapter {
      */
     static Process startServer(TestConfig config, URI serverURI, String logId) throws IOException {
         val port = config.getBkPort(0);
+        val storagePath = String.format("%s/%s-%s", LogStoreConfig.STORAGE_PATH.getDefaultValue(), port, System.currentTimeMillis());
         Process p = ProcessStarter
                 .forClass(LogStoreServiceStarter.class)
                 .sysProp(configProperty(LogStoreConfig.LISTENING_IP_ADDRESS), serverURI.getHost())
                 .sysProp(configProperty(LogStoreConfig.LISTENING_PORT), serverURI.getPort())
-                .sysProp(configProperty(LogStoreConfig.STORAGE_PATH), LogStoreConfig.STORAGE_PATH.getDefaultValue() + "/" + port)
+                .sysProp(configProperty(LogStoreConfig.STORAGE_PATH), storagePath)
                 .stdOut(ProcessBuilder.Redirect.to(new File(config.getComponentOutLogPath("logstore", 0))))
                 .stdErr(ProcessBuilder.Redirect.to(new File(config.getComponentErrLogPath("logstore", 0))))
                 .start();

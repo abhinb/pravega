@@ -30,9 +30,9 @@ public class LogStoreConfig {
     public static final Property<Integer> LISTENING_PORT = Property.named("service.listener.port", 12345);
 
     public static final Property<String> STORAGE_PATH = Property.named("storage.path", "/tmp/pravega/logstore");
-    public static final Property<Integer> CORE_POOL_SIZE = Property.named("threadpool.core.size", 4);
-    public static final Property<Integer> WRITE_POOL_SIZE = Property.named("threadpool.write.size", 16);
-    public static final Property<Integer> READ_POOL_SIZE = Property.named("threadpool.read.size", 16);
+    public static final Property<Integer> CORE_POOL_SIZE = Property.named("threadpool.core.size", 8);
+    public static final Property<Integer> WRITE_POOL_SIZE = Property.named("threadpool.write.size", 8);
+    public static final Property<Integer> READ_POOL_SIZE = Property.named("threadpool.read.size", 4);
     public static final Property<Integer> MAX_QUEUE_READ_COUNT = Property.named("writer.queue.read.size.max", 10);
     public static final Property<Integer> WRITE_BLOCK_SIZE = Property.named("writer.block.size.bytes", 4 * 1024 * 1024);
     public static final Property<Integer> READ_BLOCK_SIZE = Property.named("reader.block.size.bytes", 4 * 1024 * 1024);
