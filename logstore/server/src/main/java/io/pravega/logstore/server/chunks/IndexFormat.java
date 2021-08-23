@@ -24,7 +24,7 @@ import lombok.val;
 class IndexFormat {
     private static final int SINGLE_ENTRY_LENGTH = Long.BYTES * 2; // Entry Id -> Offset.
 
-    public ByteBuf serialize(List<PendingWrite> entryWrites) {
+    public ByteBuf serialize(List<PendingChunkWrite> entryWrites) {
         int size = SINGLE_ENTRY_LENGTH * entryWrites.size();
         val result = Unpooled.buffer(size);
         int offset = 0;

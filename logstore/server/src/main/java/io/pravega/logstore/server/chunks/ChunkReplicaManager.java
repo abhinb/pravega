@@ -69,12 +69,12 @@ public class ChunkReplicaManager implements AutoCloseable {
         }
     }
 
-    public CompletableFuture<Void> createChunkReplica(long chunkId) {
+    public CompletableFuture<ChunkReplicaWriter> createChunkReplica(long chunkId) {
         Exceptions.checkNotClosed(this.closed.get(), this);
         log.info("Create Chunk {}.", chunkId);
         val newWriter = new AtomicReference<ChunkReplicaWriter>();
         return CompletableFuture
-                .runAsync(() -> {
+                .supplyAsync(() -> {
                     newWriter.set(this.chunkReplicaFactory.createChunkReplica(chunkId));
                     newWriter.get().setOnClose(() -> unregisterWriter(chunkId, newWriter.get()));
 
@@ -94,6 +94,7 @@ public class ChunkReplicaManager implements AutoCloseable {
 
                     // Check again, in case we've already registered this.
                     Exceptions.checkNotClosed(this.closed.get(), this);
+                    return newWriter.get();
                 }, this.writeExecutor)
                 .whenComplete((r, ex) -> {
                     if (ex != null) {

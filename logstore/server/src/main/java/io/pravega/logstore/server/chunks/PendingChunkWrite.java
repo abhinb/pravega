@@ -17,34 +17,39 @@ package io.pravega.logstore.server.chunks;
 
 import io.netty.buffer.ByteBuf;
 import io.pravega.logstore.server.ChunkEntry;
-import java.util.concurrent.CompletableFuture;
 import lombok.Getter;
 import lombok.Setter;
 
 @Getter
-class PendingWrite {
+class PendingChunkWrite implements PendingChunkOp {
     private final long entryId;
     private volatile ByteBuf data;
     @Setter
     private volatile long offset = -1L;
-    private final CompletableFuture<Long> completion = new CompletableFuture<>();
 
-    private PendingWrite() {
-        this.entryId = -1L;
-        this.data = null;
-    }
-
-    PendingWrite(ChunkEntry entry, DataFormat dataFormat) {
+    PendingChunkWrite(ChunkEntry entry, DataFormat dataFormat) {
         this.entryId = entry.getEntryId();
         this.data = dataFormat.serialize(entry);
     }
 
-    static PendingWrite terminal() {
-        return new PendingWrite();
+    @Override
+    public boolean isTerminal() {
+        return this.data == null;
     }
 
-    boolean isTerminal() {
-        return this.data == null;
+    @Override
+    public boolean hasCompletion() {
+        return false;
+    }
+
+    @Override
+    public void complete() {
+        // This method intentionally left blank.
+    }
+
+    @Override
+    public void fail(Throwable exception) {
+        // This method intentionally left blank.
     }
 
     void slice(int fromOffset) {
@@ -57,18 +62,6 @@ class PendingWrite {
 
     boolean hasData() {
         return this.data.readableBytes() > 0;
-    }
-
-    void complete() {
-        this.completion.complete(this.offset);
-    }
-
-    void fail(Throwable exception) {
-        this.completion.completeExceptionally(exception);
-    }
-
-    void cancel() {
-        this.completion.cancel(true);
     }
 
     @Override

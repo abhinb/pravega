@@ -16,17 +16,23 @@
 package io.pravega.logstore.server.chunks;
 
 import com.google.common.base.Preconditions;
-import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.pravega.common.Exceptions;
 import io.pravega.common.ObjectClosedException;
 import io.pravega.common.concurrent.Futures;
+import io.pravega.common.concurrent.SequentialAsyncProcessor;
+import io.pravega.common.function.Callbacks;
 import io.pravega.common.util.BlockingDrainingQueue;
+import io.pravega.common.util.Retry;
 import io.pravega.logstore.server.ChunkEntry;
 import io.pravega.logstore.server.LogStoreConfig;
 import java.io.IOException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.Deque;
+import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -34,7 +40,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import lombok.Getter;
+import java.util.function.Consumer;
+import javax.annotation.concurrent.GuardedBy;
 import lombok.NonNull;
 import lombok.Setter;
 import lombok.SneakyThrows;
@@ -45,11 +52,16 @@ import lombok.val;
 public class ChunkReplicaWriter implements AutoCloseable {
     private static final DataFormat DATA_FORMAT = new DataFormat();
     private static final IndexFormat INDEX_FORMAT = new IndexFormat();
+    private static final Retry.RetryAndThrowConditionally FLUSH_RETRY = Retry.withExpBackoff(5, 2, 10, 1000)
+            .retryWhen(ex -> true); // Retry for every exception.
+
     private final long chunkId;
     private final LogStoreConfig config;
     private final AppendOnlyFileWriter dataWriter;
     private final AppendOnlyFileWriter indexWriter;
-    private final BlockingDrainingQueue<PendingWrite> writeQueue;
+    private final BlockingDrainingQueue<PendingChunkOp> opQueue;
+    @GuardedBy("ackQueue")
+    private final Deque<ChunkEntry> ackQueue;
     private final String traceLogId;
     private final AtomicBoolean closed;
     private final AtomicReference<CompletableFuture<Void>> runner;
@@ -58,15 +70,25 @@ public class ChunkReplicaWriter implements AutoCloseable {
     @Setter
     private volatile Runnable onClose;
     private volatile boolean stopped;
+    @GuardedBy("ackQueue")
+    private long nextExpectedEntryId;
+    @Setter
+    private volatile Consumer<WriteCompletion> completionCallback;
+    private final AtomicLong lastWrittenEntryId;
+    private final SequentialAsyncProcessor dataFlusher;
 
     ChunkReplicaWriter(long chunkId, @NonNull LogStoreConfig config, @NonNull ScheduledExecutorService executorService) {
         this.chunkId = chunkId;
         this.config = config;
         this.traceLogId = String.format("ReplicaWriter[%s]", chunkId);
-        this.dataWriter = new AppendOnlyFileWriter(config.getChunkReplicaDataFilePath(chunkId), true);
-        this.indexWriter = new AppendOnlyFileWriter(config.getChunkReplicaIndexFilePath(chunkId), false);
-        this.writeQueue = new BlockingDrainingQueue<>();
+        this.dataWriter = new AppendOnlyFileWriter(config.getChunkReplicaDataFilePath(chunkId));
+        this.indexWriter = new AppendOnlyFileWriter(config.getChunkReplicaIndexFilePath(chunkId));
+        this.dataFlusher = new SequentialAsyncProcessor(this::flushData, FLUSH_RETRY, this::flushError, executorService);
+        this.opQueue = new BlockingDrainingQueue<>();
+        this.ackQueue = new ArrayDeque<>();
         this.entryCount = new AtomicLong(0);
+        this.lastWrittenEntryId = new AtomicLong(-1L);
+        this.nextExpectedEntryId = 0L;
         this.closed = new AtomicBoolean(false);
         this.executorService = executorService;
         this.runner = new AtomicReference<>();
@@ -77,10 +99,13 @@ public class ChunkReplicaWriter implements AutoCloseable {
     public void close() {
         if (!this.closed.getAndSet(true)) {
             // Close the queue and cancel everything caught in flight.
-            val pendingWrites = this.writeQueue.close();
-            pendingWrites.forEach(PendingWrite::cancel);
+            val pendingOps = this.opQueue.close();
+            cancelIncompleteOperations(pendingOps, new CancellationException());
+            this.dataFlusher.close(); // No more auto-flushes.
             try {
-                this.dataWriter.close(); // Auto-flush.
+                // Flush everything there is to flush.
+                flushData();
+                this.dataWriter.close(); // Auto-flush (rendundant, but ensures every single byte is sync-ed).
                 log.info("{}: Data File Writer flushed and closed with length {}.", this.traceLogId, this.dataWriter.getLength());
             } catch (IOException ex) {
                 log.error("{}: Unable to close Data File Writer.", this.traceLogId, ex);
@@ -93,10 +118,11 @@ public class ChunkReplicaWriter implements AutoCloseable {
             }
 
             // Write metadata.
-            try (val metadataWriter = new AppendOnlyFileWriter(config.getChunkReplicaMetadataFilePath(this.chunkId), true)) {
+            try (val metadataWriter = new AppendOnlyFileWriter(config.getChunkReplicaMetadataFilePath(this.chunkId))) {
                 metadataWriter.open();
                 val metadata = new ChunkMetadata(this.chunkId, this.entryCount.get(), this.dataWriter.getLength(), this.indexWriter.getLength());
                 metadataWriter.append(Unpooled.wrappedBuffer(ChunkMetadata.SERIALIZER.serialize(metadata).getCopy()), 0L);
+                metadataWriter.flush();
             } catch (Throwable ex) {
                 log.error("{}: Unable to write metadata.", this.traceLogId, ex);
             }
@@ -117,66 +143,47 @@ public class ChunkReplicaWriter implements AutoCloseable {
 
         this.runner.set(Futures.loop(
                 () -> !this.closed.get(),
-                () -> this.writeQueue.take(this.config.getMaxQueueReadCount())
-                        .thenAcceptAsync(this::processWrites, this.executorService),
+                () -> this.opQueue.take(this.config.getMaxQueueReadCount())
+                        .thenAcceptAsync(this::processOperations, this.executorService),
                 this.executorService)
                 .exceptionally(this::handleError));
     }
 
     public CompletableFuture<Void> stopAndClose() {
         Preconditions.checkState(this.runner.get() != null, "Not started.");
-        val write = PendingWrite.terminal();
-        log.debug("{}: append-terminal.", this.traceLogId);
-        this.writeQueue.add(write); // this will throw ObjectClosedException if we are closed.
-        return Futures.toVoid(write.getCompletion()).thenRun(this::close);
+        val seal = new PendingChunkSeal();
+        log.debug("{}: Seal.", this.traceLogId);
+        this.opQueue.add(seal); // this will throw ObjectClosedException if we are closed.
+        return Futures.toVoid(seal.getCompletion()).thenRun(this::close);
     }
 
-    public CompletableFuture<Long> append(@NonNull ChunkEntry entry) {
+    public void append(@NonNull ChunkEntry entry) {
         Preconditions.checkState(this.runner.get() != null, "Not started.");
-        val write = new PendingWrite(entry, DATA_FORMAT);
-        log.debug("{}: append {}.", this.traceLogId, entry);
-        this.writeQueue.add(write); // this will throw ObjectClosedException if we are closed.
-        return write.getCompletion();
+        val write = new PendingChunkWrite(entry, DATA_FORMAT);
+        synchronized (this.ackQueue) {
+            Preconditions.checkArgument(entry.getEntryId() == this.nextExpectedEntryId, "Expected Entry Id %s, given %s.", this.nextExpectedEntryId, entry.getEntryId());
+            log.debug("{}: append {}.", this.traceLogId, entry);
+            this.opQueue.add(write); // this will throw ObjectClosedException if we are closed.
+            this.ackQueue.addLast(entry);
+            this.nextExpectedEntryId++;
+        }
     }
 
-    private void processWrites(Queue<PendingWrite> writes) {
-        log.debug("{}: processWrites (Count = {}).", this.traceLogId, writes.size());
+    private void processOperations(Queue<PendingChunkOp> operations) {
+        log.debug("{}: processOperations (Count = {}).", this.traceLogId, operations.size());
         WriteBatch batch = newWriteBatch(this.dataWriter.getLength());
         try {
-            while (!writes.isEmpty()) {
-                val write = writes.poll();
-                if (write.isTerminal() || this.stopped) {
-                    // Last write - flush what we have and close.
-                    this.stopped = true;
-                    flushBatch(batch);
-                    cancelIncompleteWrites(writes, new CancellationException());
-                    write.complete();
+            while (!operations.isEmpty()) {
+                val op = operations.poll();
+                if (op.isTerminal() || this.stopped) {
+                    processTerminalOperation((PendingChunkSeal) op, batch, operations);
                     break;
                 }
 
-                try {
-                    // Assign offset.
-                    write.setOffset(batch.getOffset() + batch.getLength());
-
-                    // The write may span multiple batches. Write it, piece by piece, to the batch and create new batches if needed.
-                    while (write.hasData()) {
-                        batch.add(write);
-                        if (batch.isFull()) {
-                            flushBatch(batch);
-                            long newOffset = batch.getOffset() + batch.getLength();
-                            batch = newWriteBatch(newOffset);
-                        }
-                    }
-                } catch (Throwable ex) {
-                    // We must cancel this operation as we've already picked it from the
-                    ex = Exceptions.unwrap(ex);
-                    cancelIncompleteWrites(Collections.singleton(write), ex);
-                    throw ex;
-                }
-
-                if (writes.isEmpty()) { // TODO yield after a long time to give others a chance to use the pool.
+                batch = processWriteOperation((PendingChunkWrite) op, batch, operations);
+                if (operations.isEmpty()) { // TODO yield after a long time to give others a chance to use the pool.
                     // Check if there are more operations to process. If so, do it now.
-                    writes = this.writeQueue.poll(this.config.getMaxQueueReadCount());
+                    operations = this.opQueue.poll(this.config.getMaxQueueReadCount());
                 }
             }
 
@@ -186,15 +193,55 @@ public class ChunkReplicaWriter implements AutoCloseable {
             ex = Exceptions.unwrap(ex);
 
             // Fail all writes we picked from the writeQueue and hold within our temp queue.
-            cancelIncompleteWrites(writes, ex);
+            cancelIncompleteOperations(operations, ex);
 
             // Fail all writes we picked from both the writeQueue and temp queue and are pending in a WriteBatch.
             // Note this will only "fail" those that haven't yet been acked.
-            cancelIncompleteWrites(batch.getWrites(), ex);
+            cancelIncompleteOperations(batch.getWrites(), ex);
 
             // Rethrow the exception - this will cause everything to shut down and cancel anything left in the queue.
             throw Exceptions.sneakyThrow(ex);
         }
+    }
+
+    private void processTerminalOperation(PendingChunkSeal seal, WriteBatch batch, Iterable<PendingChunkOp> pendingOps) throws IOException {
+        // Last write - flush what we have and close.
+        this.stopped = true;
+        try {
+            flushBatch(batch);
+            cancelIncompleteOperations(pendingOps, new CancellationException());
+            seal.complete();
+        } catch (Throwable ex) {
+            // We must cancel this operation as we've already picked it from the
+            cancelIncompleteOperations(Collections.singleton(seal), Exceptions.unwrap(ex));
+            throw ex;
+        }
+    }
+
+    private WriteBatch processWriteOperation(PendingChunkWrite write, WriteBatch batch, Iterable<PendingChunkOp> pendingChunkOps) throws IOException {
+        try {
+            // Assign offset.
+            write.setOffset(batch.getOffset() + batch.getLength());
+
+            // The write may span multiple batches. Write it, piece by piece, to the batch and create new batches if needed.
+            while (write.hasData()) {
+                batch.add(write);
+                if (batch.isFull()) {
+                    flushBatch(batch);
+                    long newOffset = batch.getOffset() + batch.getLength();
+                    batch = newWriteBatch(newOffset);
+                }
+            }
+        } catch (Throwable ex) {
+            // We must cancel this operation as we've already picked it from the
+            cancelIncompleteOperations(Collections.singleton(write), Exceptions.unwrap(ex));
+            throw ex;
+        }
+        return batch;
+    }
+
+    private WriteBatch newWriteBatch(long offset) {
+        return new WriteBatch(offset, this.config.getWriteBlockSize());
     }
 
     private void flushBatch(WriteBatch writeBatch) throws IOException {
@@ -203,14 +250,15 @@ public class ChunkReplicaWriter implements AutoCloseable {
             return;
         }
 
-        // 1. Flush to data file. This call syncs to disk.
+        // 1. Write to data file. This does not sync to disk yet.
         this.dataWriter.append(writeBatch.get(), writeBatch.getOffset());
-        log.debug("{}: Flushed {}.", this.traceLogId, writeBatch);
+        this.lastWrittenEntryId.set(writeBatch.getLastEntryId());
+        log.debug("{}: Wrote {}.", this.traceLogId, writeBatch);
 
-        // 2. Ack writes.
-        int count = writeBatch.complete();
-        this.entryCount.addAndGet(count);
-        log.trace("{}: Acked {}.", this.traceLogId, writeBatch);
+        // 2. Invoke the flusher (which will run async). When it's done, it will ack whatever it flushed.
+        this.dataFlusher.runAsync();
+
+        this.entryCount.addAndGet(writeBatch.getWrites().size());
 
         // 3. Write index.
         val indexWrite = INDEX_FORMAT.serialize(writeBatch.getWrites());
@@ -218,19 +266,64 @@ public class ChunkReplicaWriter implements AutoCloseable {
         log.trace("{}: Wrote Index for {}.", this.traceLogId, writeBatch);
     }
 
-    private WriteBatch newWriteBatch(long offset) {
-        return new WriteBatch(offset, this.config.getWriteBlockSize());
+    @SneakyThrows
+    private void flushData() {
+        final long lastEntryId = this.lastWrittenEntryId.get();
+        this.dataWriter.flush();
+
+        // 2. Ack writes.
+        val entries = getEntriesToAckUntilId(lastEntryId); // These are already returned in correct order.
+        val wc = new WriteCompletion(this.chunkId, entries, null);
+        Callbacks.invokeSafely(this.completionCallback, wc, this::ackError);
+        log.debug("{}: Flushed and {}.", this.traceLogId, wc);
+
+        if (this.lastWrittenEntryId.get() != lastEntryId) {
+            // We have new data to flush; do it again.
+            try {
+                this.dataFlusher.runAsync();
+            } catch (ObjectClosedException ex) {
+                log.warn("{}: Not re-running data flusher due to shutting down.", this.traceLogId);
+            }
+        }
     }
 
-    private void cancelIncompleteWrites(Iterable<PendingWrite> operations, Throwable failException) {
+    private <T extends PendingChunkOp> void cancelIncompleteOperations(Iterable<T> operations, Throwable failException) {
         assert failException != null : "no exception to set";
-        int cancelCount = 0;
-        for (PendingWrite o : operations) {
-            o.fail(failException);
-            cancelCount++;
+        val entries = new ArrayList<ChunkEntry>();
+        for (PendingChunkOp o : operations) {
+            if (o.hasCompletion()) {
+                o.fail(failException);
+            } else {
+                assert o instanceof PendingChunkWrite;
+                entries.addAll(getEntriesToAckFromId(((PendingChunkWrite) o).getEntryId()));
+            }
         }
 
-        log.warn("{}: Cancelling {} writes with exception: {}.", this.traceLogId, cancelCount, failException.toString());
+        entries.sort(Comparator.comparingLong(ChunkEntry::getEntryId)); // These are out of order (reversed/shuffled) so we must sort.
+        val wc = new WriteCompletion(this.chunkId, entries, failException);
+        Callbacks.invokeSafely(this.completionCallback, wc, this::ackError);
+
+        log.warn("{}: Cancelled {} with exception: {}.", this.traceLogId, wc, failException.toString());
+    }
+
+    private List<ChunkEntry> getEntriesToAckUntilId(long entryId) {
+        val result = new ArrayList<ChunkEntry>();
+        synchronized (this.ackQueue) {
+            while (!this.ackQueue.isEmpty() && this.ackQueue.peekFirst().getEntryId() <= entryId) {
+                result.add(this.ackQueue.removeFirst());
+            }
+        }
+        return result;
+    }
+
+    private List<ChunkEntry> getEntriesToAckFromId(long entryId) {
+        val result = new ArrayList<ChunkEntry>();
+        synchronized (this.ackQueue) {
+            while (!this.ackQueue.isEmpty() && this.ackQueue.peekLast().getEntryId() >= entryId) {
+                result.add(this.ackQueue.removeLast());
+            }
+        }
+        return result;
     }
 
     @SneakyThrows
@@ -243,70 +336,18 @@ public class ChunkReplicaWriter implements AutoCloseable {
         return null;
     }
 
-    @Getter
-    private static class WriteBatch {
-        private final long offset;
-        private int remainingCapacity;
-        private int length;
-        private final ArrayList<ByteBuf> buffers = new ArrayList<>();
-        private final ArrayList<PendingWrite> writes = new ArrayList<>();
-
-        WriteBatch(long offset, int maxSize) {
-            this.offset = offset;
-            this.remainingCapacity = maxSize;
-            this.length = 0;
-        }
-
-        @Override
-        public String toString() {
-            return String.format("Offset=%s, Length=%s, EntryIds=[%s-%s]", this.offset, this.length, getFirstEntryId(), getLastEntryId());
-        }
-
-        boolean isEmpty() {
-            return this.length == 0 && this.buffers.isEmpty() && this.writes.isEmpty();
-        }
-
-        boolean isFull() {
-            return this.remainingCapacity <= 0;
-        }
-
-        Long getFirstEntryId() {
-            return this.writes.isEmpty() ? null : this.writes.get(0).getEntryId();
-        }
-
-        Long getLastEntryId() {
-            return this.writes.isEmpty() ? null : this.writes.get(this.writes.size() - 1).getEntryId();
-        }
-
-        ByteBuf get() {
-            return Unpooled.wrappedUnmodifiableBuffer(this.buffers.toArray(new ByteBuf[this.buffers.size()]));
-        }
-
-        boolean add(PendingWrite write) {
-            if (isFull()) {
-                return false;
-            }
-
-            ByteBuf buf;
-            if (write.getData().readableBytes() <= this.remainingCapacity) {
-                // Whole fit
-                buf = write.getData();
-                this.writes.add(write);
-            } else {
-                // Partial fit
-                buf = write.getData().slice(0, this.remainingCapacity);
-            }
-
-            this.buffers.add(buf);
-            this.remainingCapacity -= buf.readableBytes();
-            this.length += buf.readableBytes();
-            write.slice(buf.readableBytes());
-            return !write.hasData();
-        }
-
-        int complete() {
-            this.writes.forEach(PendingWrite::complete);
-            return this.writes.size();
-        }
+    private void flushError(Throwable ex) {
+        log.error("{}: Disk flush failure. Closing.", this.traceLogId, ex);
+        close();
     }
+
+    private void ackError(Throwable ex) {
+        log.warn("{}: Ack failure.", this.traceLogId, ex);
+    }
+
+    @FunctionalInterface
+    public interface TriConsumer<T, U, V> {
+        void accept(T var1, U var2, V var3);
+    }
+
 }

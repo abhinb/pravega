@@ -16,8 +16,10 @@
 package io.pravega.logstore.server.handler;
 
 import io.pravega.common.Exceptions;
+import io.pravega.common.ObjectClosedException;
 import io.pravega.common.tracing.TagLogger;
 import io.pravega.logstore.server.ChunkEntry;
+import io.pravega.logstore.server.chunks.WriteCompletion;
 import io.pravega.logstore.server.service.LogStoreService;
 import io.pravega.logstore.shared.BadEntryIdException;
 import io.pravega.logstore.shared.LogChunkExistsException;
@@ -46,6 +48,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import lombok.NonNull;
@@ -97,8 +100,9 @@ public class LogStoreRequestProcessor implements RequestProcessor {
     public void createChunk(@NonNull CreateChunk request) {
         log.info(request.getRequestId(), "{}: Creating Log Chunk {}.", this.connection, request);
         this.service.createChunk(request.getChunkId())
-                .thenRun(() -> {
+                .thenAccept(writer -> {
                     this.activeChunkIds.add(request.getChunkId());
+                    writer.setCompletionCallback(this::writeCompleted);
                     this.connection.send(new ChunkCreated(request.getRequestId(), request.getChunkId()));
                 })
                 .whenComplete((r, ex) -> {
@@ -134,19 +138,33 @@ public class LogStoreRequestProcessor implements RequestProcessor {
                 this.connection, request.getChunkId(), wireEntry.getEntryId(), wireEntry.getCrc32(), wireEntry.getData().readableBytes());
         val entry = new ChunkEntry(request.getChunkId(), wireEntry.getEntryId(), wireEntry.getCrc32(), wireEntry.getData());
         this.connection.adjustOutstandingBytes(entry.getLength());
-        this.service.appendEntry(entry)
-                .thenRun(() -> connection.send(new EntryAppended(request.getChunkId(), wireEntry.getEntryId()))) // TODO: serialize all this (reduce chatter).
-                .whenComplete((r, ex) -> {
-                    if (ex == null) {
-                        log.debug("{}: Wrote Entry {} to Chunk {}.", this.connection, wireEntry.getEntryId(), request.getChunkId());
-                    } else {
-                        handleException(request.getRequestId(), request.getChunkId(), "appendEntry", ex);
-                    }
-                })
-                .whenComplete((v, e) -> {
-                    this.connection.adjustOutstandingBytes(-entry.getLength());
-                    request.release(); // Release the buffers when done.
-                });
+        this.service.appendEntry(entry);
+    }
+
+    private void writeCompleted(WriteCompletion wc) {
+        if (wc.isEmpty()) {
+            log.warn("{}: Received empty write callback {}.", this.connection, wc);
+        }
+
+        try {
+            if (wc.isFailed()) {
+                handleException(0L, wc.getChunkId(), "appendEntry", wc.getFailure());
+            } else {
+                val lastEntryId = wc.getLastEntryId();
+                assert lastEntryId >= 0;
+                this.connection.send(new EntryAppended(wc.getChunkId(), lastEntryId));
+                log.debug("{}: Acked up to Entry Id {} to Chunk {}.", this.connection, lastEntryId, wc.getChunkId());
+            }
+        } catch (Throwable ex) {
+            handleException(0L, wc.getChunkId(), "appendEntry", ex);
+        } finally {
+            val sum = new AtomicInteger();
+            wc.getEntries().forEach(e -> {
+                sum.addAndGet(e.getLength());
+                e.getData().release();
+            });
+            this.connection.adjustOutstandingBytes(-sum.get());
+        }
     }
 
     @Override
@@ -206,6 +224,10 @@ public class LogStoreRequestProcessor implements RequestProcessor {
             log.info(requestId, "Bad Entry Id for Log Chunk '{}'. Expected {}, given {}.",
                     badId.getChunkId(), badId.getExpectedEntryId(), badId.getProvidedEntryId());
             invokeSafely(connection::send, new BadEntryId(requestId, badId.getChunkId(), badId.getExpectedEntryId(), badId.getProvidedEntryId()), failureHandler);
+        } else if (u instanceof CancellationException || u instanceof ObjectClosedException) {
+            logError(requestId, chunkId, operation, u);
+            invokeSafely(connection::send, new ErrorMessage(requestId, chunkId, u.getClass().getSimpleName(), u.getMessage()), failureHandler);
+            close(); // Closing connection should reinitialize things, and hopefully fix the problem
         } else {
             logError(requestId, chunkId, operation, u);
             invokeSafely(connection::send, new ErrorMessage(requestId, chunkId, u.getClass().getSimpleName(), u.getMessage()), failureHandler);

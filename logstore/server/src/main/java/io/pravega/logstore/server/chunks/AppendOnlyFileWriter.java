@@ -31,7 +31,6 @@ import lombok.extern.slf4j.Slf4j;
 class AppendOnlyFileWriter implements AutoCloseable {
     @Getter
     private final Path path;
-    private final boolean sync;
     @GuardedBy("lock")
     private FileChannel channel;
     @Getter
@@ -52,7 +51,7 @@ class AppendOnlyFileWriter implements AutoCloseable {
 
     @Override
     public String toString() {
-        return String.format("%s [%s]", this.path, this.sync ? "SYNC" : "NON-SYNC");
+        return String.format("%s (%s bytes)", this.path, getLength());
     }
 
     public void open() throws IOException {
@@ -83,18 +82,17 @@ class AppendOnlyFileWriter implements AutoCloseable {
                 log.debug("{}: Wrote {} bytes at offset {} ({} remaining).", this.path, this.length, bytesWritten, data.readableBytes());
             }
 
-            if (this.sync) {
-                this.channel.force(true);
-            }
             this.length += count;
         }
     }
 
     public void flush() throws IOException {
+        FileChannel c;
         synchronized (this.lock) {
             Preconditions.checkState(this.channel != null, "'%s' is not open.", this);
-            this.channel.force(true);
+            c = this.channel;
         }
+        c.force(true);
     }
 
     public static final class BadOffsetException extends RuntimeException {

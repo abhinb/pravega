@@ -20,6 +20,7 @@ import io.netty.buffer.ByteBuf;
 import io.pravega.common.Exceptions;
 import io.pravega.common.ObjectClosedException;
 import io.pravega.common.concurrent.Futures;
+import io.pravega.common.concurrent.SequentialAsyncProcessor;
 import io.pravega.common.util.RetriesExhaustedException;
 import io.pravega.common.util.Retry;
 import io.pravega.logstore.client.EntryAddress;

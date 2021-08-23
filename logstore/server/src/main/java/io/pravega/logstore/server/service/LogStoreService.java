@@ -21,6 +21,7 @@ import io.pravega.logstore.server.ChunkInfo;
 import io.pravega.logstore.server.LogStoreConfig;
 import io.pravega.logstore.server.chunks.ChunkReplicaManager;
 import io.pravega.logstore.server.chunks.ChunkReplicaReader;
+import io.pravega.logstore.server.chunks.ChunkReplicaWriter;
 import io.pravega.logstore.shared.LogChunkNotExistsException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -47,7 +48,7 @@ public class LogStoreService {
     @NonNull
     private final ScheduledExecutorService readExecutor;
 
-    public CompletableFuture<Void> createChunk(long chunkId) {
+    public CompletableFuture<ChunkReplicaWriter> createChunk(long chunkId) {
         log.info("Create Chunk {}.", chunkId);
         return this.manager.createChunkReplica(chunkId);
     }
@@ -69,10 +70,10 @@ public class LogStoreService {
         return Futures.allOf(futures);
     }
 
-    public CompletableFuture<Long> appendEntry(@NonNull ChunkEntry entry) {
+    public void appendEntry(@NonNull ChunkEntry entry) {
         log.debug("Append {}.", entry);
         val writer = this.manager.getWriter(entry.getChunkId());
-        return writer.append(entry);
+        writer.append(entry);
     }
 
     public CompletableFuture<ChunkInfo> getChunkInfo(long chunkId) {
