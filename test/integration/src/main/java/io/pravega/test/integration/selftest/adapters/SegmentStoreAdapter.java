@@ -72,6 +72,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import lombok.SneakyThrows;
 import lombok.val;
 import org.apache.curator.framework.CuratorFramework;
@@ -96,6 +97,7 @@ class SegmentStoreAdapter extends StoreAdapter {
     private final AtomicReference<ScheduledExecutorService> storeExecutor;
     private final Thread stopBookKeeperProcess;
     private Process bookKeeperService;
+    private Process bookKeeperService2;
     private StreamSegmentStore streamSegmentStore;
     private TableStore tableStore;
     private CuratorFramework zkClient;
@@ -162,8 +164,11 @@ class SegmentStoreAdapter extends StoreAdapter {
                         .replicationFactor(1)
                         .rolloverSizeBytes(1024 * 1024 * 1024)
                         .build();
-                val logStoreURI = URI.create(String.format("tcp://%s:%s", LogStoreAdapter.getHostAddress(), this.config.getBkPort(0)));
-                return new LogStoreLogFactory(config, Collections.singletonList(logStoreURI));
+
+                val logStoreURIs = IntStream.range(0, this.config.getBookieCount())
+                        .mapToObj(i -> URI.create(String.format("tcp://%s:%s", LogStoreAdapter.getHostAddress(), this.config.getBkPort(i))))
+                        .collect(Collectors.toList());
+                return new LogStoreLogFactory(config, logStoreURIs);
             });
         } else {
             // We were instructed to start at least one Bookie.
@@ -191,6 +196,9 @@ class SegmentStoreAdapter extends StoreAdapter {
                 this.zkServer = new TestingServer(this.config.getZkPort(), true);
                 val logStoreURI = URI.create(String.format("tcp://%s:%s", LogStoreAdapter.getHostAddress(), this.config.getBkPort(0)));
                 this.bookKeeperService = LogStoreAdapter.startServer(this.config, logStoreURI, "test");
+
+                val logStoreURI2 = URI.create(String.format("tcp://%s:%s", LogStoreAdapter.getHostAddress(), this.config.getBkPort(1)));
+                this.bookKeeperService2 = LogStoreAdapter.startServer(this.config, logStoreURI2,"/media/andrei/SSD2/logstore2", "test");
             } else {
                 this.bookKeeperService = BookKeeperAdapter.startBookKeeperOutOfProcess(this.config, this.logId);
             }
@@ -385,6 +393,13 @@ class SegmentStoreAdapter extends StoreAdapter {
             bk.destroyForcibly();
             log("Bookies shut down.");
             this.bookKeeperService = null;
+        }
+
+        val bk2 = this.bookKeeperService2;
+        if (bk2 != null) {
+            bk2.destroyForcibly();
+            log("Bookies shut down.");
+            this.bookKeeperService2 = null;
         }
     }
 

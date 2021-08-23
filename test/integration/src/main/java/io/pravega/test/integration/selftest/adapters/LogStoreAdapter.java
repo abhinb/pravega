@@ -233,18 +233,22 @@ public class LogStoreAdapter extends StoreAdapter {
      * @throws IOException If an error occurred.
      */
     static Process startServer(TestConfig config, URI serverURI, String logId) throws IOException {
-        val port = config.getBkPort(0);
-        val storagePath = String.format("%s/%s-%s", LogStoreConfig.STORAGE_PATH.getDefaultValue(), port, System.currentTimeMillis());
+        return startServer(config, serverURI, LogStoreConfig.STORAGE_PATH.getDefaultValue(), logId);
+    }
+
+    static Process startServer(TestConfig config, URI serverURI, String storagePathRoot, String logId) throws IOException {
+        val port = serverURI.getPort();
+        val storagePath = String.format("%s/%s-%s", storagePathRoot, port, System.currentTimeMillis());
         Process p = ProcessStarter
                 .forClass(LogStoreServiceStarter.class)
                 .sysProp(configProperty(LogStoreConfig.LISTENING_IP_ADDRESS), serverURI.getHost())
                 .sysProp(configProperty(LogStoreConfig.LISTENING_PORT), serverURI.getPort())
                 .sysProp(configProperty(LogStoreConfig.STORAGE_PATH), storagePath)
-                .stdOut(ProcessBuilder.Redirect.to(new File(config.getComponentOutLogPath("logstore", 0))))
-                .stdErr(ProcessBuilder.Redirect.to(new File(config.getComponentErrLogPath("logstore", 0))))
+                .stdOut(ProcessBuilder.Redirect.to(new File(config.getComponentOutLogPath("logstore-" + port, 0))))
+                .stdErr(ProcessBuilder.Redirect.to(new File(config.getComponentErrLogPath("logstore-" + port, 0))))
                 .start();
         Exceptions.handleInterrupted(() -> Thread.sleep(2000));
-        TestLogger.log(logId, "LogStore Service (Port %s) started.", config.getBkPort(0));
+        TestLogger.log(logId, "LogStore Service (Port %s) started.", serverURI.getPort());
         return p;
     }
 
