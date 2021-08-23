@@ -48,11 +48,15 @@ class WriteBatch {
     }
 
     Long getFirstEntryId() {
-        return this.writes.isEmpty() ? null : this.writes.get(0).getEntryId();
+        return hasCompletedEntries() ? this.writes.get(0).getEntryId() : null;
     }
 
     Long getLastEntryId() {
-        return this.writes.isEmpty() ? null : this.writes.get(this.writes.size() - 1).getEntryId();
+        return hasCompletedEntries() ? this.writes.get(this.writes.size() - 1).getEntryId() : null;
+    }
+
+    boolean hasCompletedEntries() {
+        return this.writes.size() > 0;
     }
 
     ByteBuf get() {

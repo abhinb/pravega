@@ -41,4 +41,9 @@ class PendingChunkSeal implements PendingChunkOp {
     public void fail(Throwable ex) {
         this.completion.completeExceptionally(ex);
     }
+
+    @Override
+    public String toString() {
+        return "SealChunk";
+    }
 }

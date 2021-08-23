@@ -241,7 +241,8 @@ public class ChunkReplicaWriter implements AutoCloseable {
     }
 
     private WriteBatch newWriteBatch(long offset) {
-        return new WriteBatch(offset, this.config.getWriteBlockSize());
+        int length = this.config.getWriteBlockSize() - (int) (offset % this.config.getWriteBlockSize());
+        return new WriteBatch(offset, length);
     }
 
     private void flushBatch(WriteBatch writeBatch) throws IOException {
@@ -252,18 +253,20 @@ public class ChunkReplicaWriter implements AutoCloseable {
 
         // 1. Write to data file. This does not sync to disk yet.
         this.dataWriter.append(writeBatch.get(), writeBatch.getOffset());
-        this.lastWrittenEntryId.set(writeBatch.getLastEntryId());
-        log.debug("{}: Wrote {}.", this.traceLogId, writeBatch);
 
         // 2. Invoke the flusher (which will run async). When it's done, it will ack whatever it flushed.
-        this.dataFlusher.runAsync();
+        if (writeBatch.hasCompletedEntries()) {
+            this.lastWrittenEntryId.set(writeBatch.getLastEntryId());
+            log.debug("{}: Wrote {}.", this.traceLogId, writeBatch);
 
-        this.entryCount.addAndGet(writeBatch.getWrites().size());
+            this.dataFlusher.runAsync();
+            this.entryCount.addAndGet(writeBatch.getWrites().size());
 
-        // 3. Write index.
-        val indexWrite = INDEX_FORMAT.serialize(writeBatch.getWrites());
-        this.indexWriter.append(indexWrite, this.indexWriter.getLength());
-        log.trace("{}: Wrote Index for {}.", this.traceLogId, writeBatch);
+            // 3. Write index.
+            val indexWrite = INDEX_FORMAT.serialize(writeBatch.getWrites());
+            this.indexWriter.append(indexWrite, this.indexWriter.getLength());
+            log.trace("{}: Wrote Index for {}.", this.traceLogId, writeBatch);
+        }
     }
 
     @SneakyThrows
@@ -273,9 +276,11 @@ public class ChunkReplicaWriter implements AutoCloseable {
 
         // 2. Ack writes.
         val entries = getEntriesToAckUntilId(lastEntryId); // These are already returned in correct order.
-        val wc = new WriteCompletion(this.chunkId, entries, null);
-        Callbacks.invokeSafely(this.completionCallback, wc, this::ackError);
-        log.debug("{}: Flushed and {}.", this.traceLogId, wc);
+        if (entries.size() > 0) {
+            val wc = new WriteCompletion(this.chunkId, entries, null);
+            Callbacks.invokeSafely(this.completionCallback, wc, this::ackError);
+            log.debug("{}: Flushed and acked {}.", this.traceLogId, wc);
+        }
 
         if (this.lastWrittenEntryId.get() != lastEntryId) {
             // We have new data to flush; do it again.
@@ -299,11 +304,12 @@ public class ChunkReplicaWriter implements AutoCloseable {
             }
         }
 
-        entries.sort(Comparator.comparingLong(ChunkEntry::getEntryId)); // These are out of order (reversed/shuffled) so we must sort.
-        val wc = new WriteCompletion(this.chunkId, entries, failException);
-        Callbacks.invokeSafely(this.completionCallback, wc, this::ackError);
-
-        log.warn("{}: Cancelled {} with exception: {}.", this.traceLogId, wc, failException.toString());
+        if (entries.size() > 0) {
+            entries.sort(Comparator.comparingLong(ChunkEntry::getEntryId)); // These are out of order (reversed/shuffled) so we must sort.
+            val wc = new WriteCompletion(this.chunkId, entries, failException);
+            Callbacks.invokeSafely(this.completionCallback, wc, this::ackError);
+            log.warn("{}: Cancelled {} with exception: {}.", this.traceLogId, wc, failException.toString());
+        }
     }
 
     private List<ChunkEntry> getEntriesToAckUntilId(long entryId) {
