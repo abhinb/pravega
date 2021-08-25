@@ -197,8 +197,10 @@ class SegmentStoreAdapter extends StoreAdapter {
                 val logStoreURI = URI.create(String.format("tcp://%s:%s", LogStoreAdapter.getHostAddress(), this.config.getBkPort(0)));
                 this.bookKeeperService = LogStoreAdapter.startServer(this.config, logStoreURI, "test");
 
-                val logStoreURI2 = URI.create(String.format("tcp://%s:%s", LogStoreAdapter.getHostAddress(), this.config.getBkPort(1)));
-                this.bookKeeperService2 = LogStoreAdapter.startServer(this.config, logStoreURI2,"/media/andrei/SSD2/logstore2", "test");
+                if (this.config.getBookieCount() > 1) {
+                    val logStoreURI2 = URI.create(String.format("tcp://%s:%s", LogStoreAdapter.getHostAddress(), this.config.getBkPort(1)));
+                    this.bookKeeperService2 = LogStoreAdapter.startServer(this.config, logStoreURI2, "/media/andrei/SSD2/logstore2", "test");
+                }
             } else {
                 this.bookKeeperService = BookKeeperAdapter.startBookKeeperOutOfProcess(this.config, this.logId);
             }
