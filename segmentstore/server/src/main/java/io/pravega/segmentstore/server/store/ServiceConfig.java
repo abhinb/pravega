@@ -36,6 +36,7 @@ import lombok.SneakyThrows;
 /**
  * General Service Configuration.
  */
+@Getter
 public class ServiceConfig {
     //region Config Names
 
@@ -89,6 +90,9 @@ public class ServiceConfig {
     // Admin Gateway-related parameters
     public static final Property<Boolean> ENABLE_ADMIN_GATEWAY = Property.named("admin.gateway.enable", false);
     public static final Property<Integer> ADMIN_GATEWAY_PORT = Property.named("admin.gateway.port", 9999);
+
+    //LogStore Servers
+    public static final Property<String> LOGSTORE_SERVER_URIS = Property.named("logstore.connect.uris", ""); //comma separated
 
     public static final String COMPONENT_CODE = "pravegaservice";
 
@@ -345,6 +349,9 @@ public class ServiceConfig {
 
     @Getter
     private final Duration healthCheckInterval;
+
+    @Getter
+    private final String logStoreServerURIs;
     //endregion
 
     //region Constructor
@@ -424,6 +431,7 @@ public class ServiceConfig {
         this.healthCheckInterval = Duration.ofSeconds(properties.getInt(HEALTH_CHECK_INTERVAL_SECONDS));
         this.enableAdminGateway = properties.getBoolean(ENABLE_ADMIN_GATEWAY);
         this.adminGatewayPort = properties.getInt(ADMIN_GATEWAY_PORT);
+        this.logStoreServerURIs = properties.get(LOGSTORE_SERVER_URIS);
     }
 
     /**

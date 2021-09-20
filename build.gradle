@@ -1,4 +1,5 @@
 import org.gradle.internal.jvm.Jvm
+import java.util.regex.Matcher
 
 /**
  * Copyright Pravega Authors.
@@ -585,6 +586,7 @@ project('segmentstore:server:host') {
 
     startScripts {
         classpath += files('$APP_HOME/pluginlib')
+        classpath += files('$APP_HOME/lib')
         doLast {
             def scriptFile = file getUnixScript()
             scriptFile.text = scriptFile.text.replace('$APP_HOME/lib/pluginlib', '$APP_HOME/pluginlib/*')
@@ -617,6 +619,10 @@ project('segmentstore:server:host') {
         compile project(':bindings')
         compile project(':shared:health-bindings')
         compile project(':segmentstore:server')
+        compile project(':logstore:shared')
+        compile project(':logstore:client')
+       // compile project(':logstore:server')
+        compile files(project(':logstore:client').sourceSets.main.output)
         compile group: 'ch.qos.logback', name: 'logback-classic', version: qosLogbackVersion
         testCompile project(':test:testcommon')
         testCompile group: 'org.apache.curator', name: 'curator-test', version: apacheCuratorVersion
@@ -1475,6 +1481,9 @@ distributions {
                 exclude "logback.xml"
             }
             from (project(":segmentstore:server:host").installDist) {
+                exclude "logback.xml"
+            }
+            from (project(":logstore:server").installDist) {
                 exclude "logback.xml"
             }
             from (project(":cli:admin").installDist)
