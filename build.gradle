@@ -1,5 +1,4 @@
 import org.gradle.internal.jvm.Jvm
-import java.util.regex.Matcher
 
 /**
  * Copyright Pravega Authors.

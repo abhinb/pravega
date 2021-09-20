@@ -232,7 +232,6 @@ public final class ServiceStarter {
                     Collection<URI> logStoreURIs = new ArrayList<>();
                     Arrays.asList(this.serviceConfig.getLogStoreServerURIs().split(",")).forEach(s -> {
                         try {
-                            log.info("LogStore URI "+s);
                             logStoreURIs.add(new URI("tcp", "", s.split(":")[0], Integer.parseInt(s.split(":")[1]), "", "", ""));
                         } catch (URISyntaxException e) {  throw new RuntimeException(e); }
                     });
