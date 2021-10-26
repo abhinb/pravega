@@ -50,11 +50,12 @@ public class MetadataManager {
             val path = MetadataManager.ZK_PATH;
             for (int i = 0; i < this.config.getZkRetryCount(); i++) {
                 if (this.metadata == null) {
-                    this.metadata = get(path, Metadata.SERIALIZER::deserialize, new Metadata(0L));
-                } else {
-                    this.metadata = this.metadata.withNextChunkId();
+                    //need log here
+                    this.metadata = new Metadata(0L);
                 }
-
+                Metadata m = get(path, Metadata.SERIALIZER::deserialize, this.metadata );
+                if ( m != this.metadata ) // if we get back the same default we passed like '0' initially, then skip incrementing
+                    this.metadata = m.withNextChunkId();
                 if (set(this.metadata, path, Metadata.SERIALIZER::serialize)) {
                     return this.metadata.getNextChunkId();
                 } else {

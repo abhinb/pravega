@@ -620,8 +620,9 @@ project('segmentstore:server:host') {
         compile project(':segmentstore:server')
         compile project(':logstore:shared')
         compile project(':logstore:client')
-       // compile project(':logstore:server')
-        compile files(project(':logstore:client').sourceSets.main.output)
+        compile project(':logstore:server')
+        //compile files(project(':logstore:client').sourceSets.main.output)
+        compile fileTree(dir: "$rootDir/logstore/client", include: "**/*.jar")
         compile group: 'ch.qos.logback', name: 'logback-classic', version: qosLogbackVersion
         testCompile project(':test:testcommon')
         testCompile group: 'org.apache.curator', name: 'curator-test', version: apacheCuratorVersion

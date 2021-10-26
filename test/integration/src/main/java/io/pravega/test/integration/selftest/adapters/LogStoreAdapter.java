@@ -31,6 +31,7 @@ import io.pravega.logstore.client.LogWriter;
 import io.pravega.logstore.server.LogStoreConfig;
 import io.pravega.logstore.server.LogStoreServiceStarter;
 import io.pravega.segmentstore.contracts.StreamSegmentNotExistsException;
+import io.pravega.segmentstore.server.store.ServiceBuilderConfig;
 import io.pravega.test.integration.selftest.Event;
 import io.pravega.test.integration.selftest.TestConfig;
 import io.pravega.test.integration.selftest.TestLogger;
@@ -74,11 +75,12 @@ public class LogStoreAdapter extends StoreAdapter {
         this.writers = new ConcurrentHashMap<>();
         this.stopServerProcess = new Thread(this::stopServer);
         Runtime.getRuntime().addShutdownHook(this.stopServerProcess);
-        val clientConfig = LogClientConfig.builder()
-                .replicationFactor(1)
-                .clientThreadPoolSize(10)
-                .zkURL("localhost:" + testConfig.getZkPort())
-                .build();
+        val clientConfig = ServiceBuilderConfig.builder().include(LogClientConfig.
+                                                       builder()
+                                                       .with(LogClientConfig.REPLICATION_FACTOR, 1)
+                                                       .with(LogClientConfig.CLIENT_THREAD_POOL_SIZE, 10)
+                                                       .with(LogClientConfig.ZKURL, "localhost:" + this.testConfig.getZkPort()))
+                                               .build().getConfig(LogClientConfig::builder);
         this.zkServer = new TestingServer(testConfig.getZkPort());
         this.logClient = new LogClient(clientConfig, Collections.singletonList(this.serverURI));
     }

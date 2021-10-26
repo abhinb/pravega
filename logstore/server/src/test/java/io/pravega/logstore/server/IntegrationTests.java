@@ -59,14 +59,20 @@ public class IntegrationTests {
             Arrays.asList(LOCAL_URI_1, LOCAL_URI_2, LOCAL_URI_3));
     //            Arrays.asList(LOCAL_URI_1));
     private static final int ZK_PORT = 2181;
-    private static final LogClientConfig CLIENT_CONFIG = LogClientConfig.builder()
-            .replicationFactor(1)
-            .clientThreadPoolSize(4)
-            .rolloverSizeBytes(10 * 1024 * 1024)
-            .zkURL("localhost:" + ZK_PORT)
-
-            .build();
-
+    //    private static final LogClientConfig CLIENT_CONFIG = LogClientConfig.builder()
+    //            .replicationFactor(1)
+    //            .clientThreadPoolSize(4)
+    //            .rolloverSizeBytes(10 * 1024 * 1024)
+    //            .zkURL("localhost:" + ZK_PORT)
+    //
+    //            .build();
+    private static final LogClientConfig CLIENT_CONFIG = ApplicationConfig.builder().include(LogClientConfig.
+                                                                                     builder()
+                                                                                     .with(LogClientConfig.REPLICATION_FACTOR, 1)
+                                                                                     .with(LogClientConfig.CLIENT_THREAD_POOL_SIZE, 4)
+                                                                                     .with(LogClientConfig.ROLLOVER_SIZE_BYTES, 10 * 1024 * 1024L)
+                                                                                     .with(LogClientConfig.ZKURL, "localhost:" + ZK_PORT))
+                                                                             .build().getConfig(LogClientConfig::builder);
     private List<LogStoreServiceStarter> services;
     private TestingServer zkServer;
 

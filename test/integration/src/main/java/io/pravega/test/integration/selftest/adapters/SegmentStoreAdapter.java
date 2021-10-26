@@ -158,13 +158,13 @@ class SegmentStoreAdapter extends StoreAdapter {
 
         if (this.config.getTestType().isUseLogStore()) {
             return builder.withDataLogFactory(setup -> {
-                LogClientConfig config = LogClientConfig.builder()
-                        .zkURL("localhost:" + this.config.getZkPort())
-                        .clientThreadPoolSize(10)
-                        .replicationFactor(1)
-                        .rolloverSizeBytes(1024 * 1024 * 1024)
-                        .build();
-
+                LogClientConfig config = ServiceBuilderConfig.builder().include(LogClientConfig.
+                                                                     builder()
+                                                                     .with(LogClientConfig.REPLICATION_FACTOR, 1)
+                                                                     .with(LogClientConfig.CLIENT_THREAD_POOL_SIZE, 10)
+                                                                     .with(LogClientConfig.ROLLOVER_SIZE_BYTES, 1024 * 1024 * 1024L)
+                                                                     .with(LogClientConfig.ZKURL, "localhost:" + this.config.getZkPort()))
+                                                             .build().getConfig(LogClientConfig::builder);
                 val logStoreURIs = IntStream.range(0, this.config.getBookieCount())
                         .mapToObj(i -> URI.create(String.format("tcp://%s:%s", LogStoreAdapter.getHostAddress(), this.config.getBkPort(i))))
                         .collect(Collectors.toList());

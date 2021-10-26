@@ -34,8 +34,6 @@ import io.pravega.segmentstore.server.host.stat.AutoScalerConfig;
 import io.pravega.segmentstore.server.store.ServiceBuilder;
 import io.pravega.segmentstore.server.store.ServiceBuilderConfig;
 import io.pravega.segmentstore.server.store.ServiceConfig;
-import io.pravega.segmentstore.storage.impl.bookkeeper.BookKeeperConfig;
-import io.pravega.segmentstore.storage.impl.bookkeeper.BookKeeperLogFactory;
 import io.pravega.segmentstore.storage.mocks.InMemoryDurableDataLogFactory;
 import io.pravega.shared.health.HealthServiceManager;
 import io.pravega.shared.metrics.MetricsConfig;
@@ -51,7 +49,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
 
 import lombok.extern.slf4j.Slf4j;
 import org.apache.curator.framework.CuratorFramework;
@@ -230,12 +227,18 @@ public final class ServiceStarter {
             switch (this.serviceConfig.getDataLogTypeImplementation()) {
                 case BOOKKEEPER:
                     Collection<URI> logStoreURIs = new ArrayList<>();
+                    Preconditions.checkState(this.serviceConfig.getLogStoreServerURIs().length() > 1, "No LogStore server URI's configured");
                     Arrays.asList(this.serviceConfig.getLogStoreServerURIs().split(",")).forEach(s -> {
                         try {
                             logStoreURIs.add(new URI("tcp", "", s.split(":")[0], Integer.parseInt(s.split(":")[1]), "", "", ""));
-                        } catch (URISyntaxException e) {  throw new RuntimeException(e); }
+                        } catch (URISyntaxException e) {
+                            throw new RuntimeException(e);
+                        }
                     });
-                    return new LogStoreLogFactory( LogClientConfig.builder().build(), logStoreURIs);
+                    LogClientConfig logClientConfig = this.builderConfig.getConfigBuilder(LogClientConfig::builder)
+                                                                        .with(LogClientConfig.ZKURL, this.serviceConfig.getZkURL()).build();
+                    log.info(" zk url in logclientConfig {}", logClientConfig.getZkURL());
+                    return new LogStoreLogFactory(logClientConfig, logStoreURIs);
                 case INMEMORY:
                     return new InMemoryDurableDataLogFactory(setup.getCoreExecutor());
                 default:
