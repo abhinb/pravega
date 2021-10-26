@@ -29,6 +29,8 @@ import io.pravega.segmentstore.server.CacheManager.CacheManagerHealthContributor
 import io.pravega.segmentstore.server.host.delegationtoken.TokenVerifierImpl;
 import io.pravega.segmentstore.server.host.handler.AdminConnectionListener;
 import io.pravega.segmentstore.server.host.handler.PravegaConnectionListener;
+import io.pravega.segmentstore.storage.impl.logstore.LogStoreLogFactory;
+import io.pravega.logstore.client.LogClientConfig;
 import io.pravega.segmentstore.server.host.health.ZKHealthContributor;
 import io.pravega.shared.health.bindings.resources.HealthImpl;
 import io.pravega.segmentstore.server.host.stat.AutoScaleMonitor;
@@ -36,8 +38,6 @@ import io.pravega.segmentstore.server.host.stat.AutoScalerConfig;
 import io.pravega.segmentstore.server.store.ServiceBuilder;
 import io.pravega.segmentstore.server.store.ServiceBuilderConfig;
 import io.pravega.segmentstore.server.store.ServiceConfig;
-import io.pravega.segmentstore.storage.impl.bookkeeper.BookKeeperConfig;
-import io.pravega.segmentstore.storage.impl.bookkeeper.BookKeeperLogFactory;
 import io.pravega.segmentstore.storage.mocks.InMemoryDurableDataLogFactory;
 import io.pravega.segmentstore.server.host.health.SegmentContainerRegistryHealthContributor;
 import io.pravega.shared.health.HealthServiceManager;
@@ -46,11 +46,16 @@ import io.pravega.shared.metrics.MetricsProvider;
 import io.pravega.shared.metrics.StatsProvider;
 import io.pravega.shared.rest.RESTServer;
 import io.pravega.shared.rest.security.AuthHandlerManager;
-
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.concurrent.atomic.AtomicReference;
 import java.lang.management.ManagementFactory;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicReference;
-
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.curator.framework.CuratorFramework;
@@ -239,7 +244,19 @@ public final class ServiceStarter {
         builder.withDataLogFactory(setup -> {
             switch (this.serviceConfig.getDataLogTypeImplementation()) {
                 case BOOKKEEPER:
-                    return new BookKeeperLogFactory(setup.getConfig(BookKeeperConfig::builder), this.zkClient, setup.getCoreExecutor());
+                    Collection<URI> logStoreURIs = new ArrayList<>();
+                    Preconditions.checkState(this.serviceConfig.getLogStoreServerURIs().length() > 1, "No LogStore server URI's configured");
+                    Arrays.asList(this.serviceConfig.getLogStoreServerURIs().split(",")).forEach(s -> {
+                        try {
+                            logStoreURIs.add(new URI("tcp", "", s.split(":")[0], Integer.parseInt(s.split(":")[1]), "", "", ""));
+                        } catch (URISyntaxException e) {
+                            throw new RuntimeException(e);
+                        }
+                    });
+                    LogClientConfig logClientConfig = this.builderConfig.getConfigBuilder(LogClientConfig::builder)
+                                                                        .with(LogClientConfig.ZKURL, this.serviceConfig.getZkURL()).build();
+                    log.info(" zk url in logclientConfig {}", logClientConfig.getZkURL());
+                    return new LogStoreLogFactory(logClientConfig, logStoreURIs);
                 case INMEMORY:
                     return new InMemoryDurableDataLogFactory(setup.getCoreExecutor());
                 default:

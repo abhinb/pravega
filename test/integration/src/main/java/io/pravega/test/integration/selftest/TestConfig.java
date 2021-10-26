@@ -70,7 +70,7 @@ public class TestConfig {
     static final Property<String> CONTROLLER_HOST = Property.named("controllerHost", LOCALHOST);
     static final Property<Integer> CONTROLLER_BASE_PORT = Property.named("controllerPort", 9200);
     static final Property<Boolean> PAUSE_BEFORE_EXIT = Property.named("pauseBeforeExit", false);
-    static final Property<String> BOOKIE_LEDGERS_DIR = Property.named("bkLedgersDir", "");
+    static final Property<String> BOOKIE_LEDGERS_DIR = Property.named("bkLedgersDir", "/media/andrei/data/bkledgers");
     static final Property<String> STORAGE_DIR = Property.named("storageDir", TMP_DIR + "/pravega/storage");
     static final Property<Boolean> CHUNKED_SEGMENT_STORAGE_ENABLED = Property.named("useChunkedSegmentStorage", true);
     private static final Property<Integer> ZK_PORT = Property.named("zkPort", 9000);
@@ -370,18 +370,22 @@ public class TestConfig {
 
     @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
     public enum TestType {
-        SegmentStore(false),
-        SegmentStoreTable(true),
-        InProcessMock(false),
-        InProcessMockTable(true),
-        InProcessStore(false),
-        InProcessStoreTable(true),
-        AppendProcessor(false),
-        OutOfProcess(false),
-        External(false),
-        BookKeeper(false);
+        SegmentStore(false, false),
+        SegmentStoreLogService(false, true),
+        SegmentStoreTable(true, false),
+        InProcessMock(false, false),
+        InProcessMockTable(true, false),
+        InProcessStore(false, false),
+        InProcessStoreTable(true, false),
+        AppendProcessor(false, false),
+        OutOfProcess(false, false),
+        External(false, false),
+        BookKeeper(false, false),
+        LogStore(false, false);
         @Getter
         private final boolean tablesTest;
+        @Getter
+        private final boolean useLogStore;
     }
 
     public enum TableType {

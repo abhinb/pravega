@@ -263,6 +263,30 @@ public class SimpleCache<KeyT, ValueT> {
     }
 
     /**
+     * Evicts all item in this cache, regardless of expiration status.
+     */
+    public void cleanUpAll() {
+        ArrayList<Entry<KeyT, ValueT>> evicted;
+        synchronized (this.lock) {
+            evicted = new ArrayList<>(this.map.values());
+            this.leastRecent = null;
+            this.mostRecent = null;
+        }
+
+        if (this.onExpiration != null) {
+            for (val e : evicted) {
+                try {
+                    this.onExpiration.accept(e.key, e.value);
+                } catch (Throwable ex) {
+                    // Log and move on. There is no way we can handle this anyway here, and this shouldn't prevent us
+                    // from invoking it for subsequent entries or fail whatever called us anyway.
+                    log.error("Eviction callback for {} failed.", e.key, ex);
+                }
+            }
+        }
+    }
+
+    /**
      * Performs a cleanup of this class. After this method completes, the following will be true:
      * - {@link #size()} will be less than or equal to {@link #getMaxSize()}.
      * - All expired entries will be removed.

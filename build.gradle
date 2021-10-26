@@ -415,6 +415,65 @@ project('test:testcommon') {
     }
 }
 
+project('logstore:shared') {
+    dependencies {
+        compile project(':common')
+        compile project(':common_server')
+        compile group: 'com.google.guava', name: 'guava', version: guavaVersion
+        compile group: 'ch.qos.logback', name: 'logback-classic', version: qosLogbackVersion
+        compile group: 'io.netty', name: 'netty-handler', version: nettyVersion
+        compile group: 'io.netty', name: 'netty-transport', version: nettyVersion
+        testCompile project(':test:testcommon')
+    }
+    javadoc {
+        dependsOn delombok
+        source = delombok.outputDir
+        failOnError = true
+    }
+}
+
+project('logstore:client') {
+    dependencies {
+        compile project(':common')
+        compile project(':common_server')
+        compile project(':logstore:shared')
+        compile group: 'org.apache.curator', name: 'curator-framework', version: apacheCuratorVersion
+        compile group: 'com.google.guava', name: 'guava', version: guavaVersion
+        compile group: 'ch.qos.logback', name: 'logback-classic', version: qosLogbackVersion
+        compile "io.netty:netty-transport-native-epoll:" + nettyVersion
+        testCompile project(':test:testcommon')
+    }
+    javadoc {
+        dependsOn delombok
+        source = delombok.outputDir
+        failOnError = true
+    }
+}
+
+project('logstore:server') {
+    apply plugin: 'application'
+    applicationName = "pravega-logstore"
+    mainClassName = "io.pravega.logstore.server.LogStoreServiceStarter"
+
+    dependencies {
+        compile project(':common')
+        compile project(':common_server')
+        compile project(':logstore:shared')
+        compile project(':logstore:client') // For testing purposes only ...
+        compile group: 'io.netty', name: 'netty-transport', version: nettyVersion
+        compile "io.netty:netty-transport-native-epoll:" + nettyVersion
+        compile group: 'io.netty', name: 'netty-handler', version: nettyVersion
+        compile group: 'com.google.guava', name: 'guava', version: guavaVersion
+        compile group: 'ch.qos.logback', name: 'logback-classic', version: qosLogbackVersion
+        testCompile project(':test:testcommon')
+    }
+    javadoc {
+        dependsOn delombok
+        source = delombok.outputDir
+        failOnError = true
+    }
+}
+
 project('segmentstore:contracts') {
     dependencies {
         compile project(':common')
@@ -448,6 +507,7 @@ project('segmentstore:storage:impl') {
         compile project(':common')
         compile project(':segmentstore:storage')
         compile project(':shared:metrics')
+        compile project(':logstore:client')
         compile group: 'org.apache.curator', name: 'curator-framework', version: apacheCuratorVersion
         compile group: 'org.apache.bookkeeper', name: 'bookkeeper-server', version: bookKeeperVersion, withoutLogger
         testCompile project(':test:testcommon')
@@ -530,6 +590,7 @@ project('segmentstore:server:host') {
 
     startScripts {
         classpath += files('$APP_HOME/pluginlib')
+        classpath += files('$APP_HOME/lib')
         doLast {
             def scriptFile = file getUnixScript()
             scriptFile.text = scriptFile.text.replace('$APP_HOME/lib/pluginlib', '$APP_HOME/pluginlib/*')
@@ -562,6 +623,11 @@ project('segmentstore:server:host') {
         compile project(':bindings')
         compile project(':shared:health-bindings')
         compile project(':segmentstore:server')
+        compile project(':logstore:shared')
+        compile project(':logstore:client')
+        compile project(':logstore:server')
+        //compile files(project(':logstore:client').sourceSets.main.output)
+        compile fileTree(dir: "$rootDir/logstore/client", include: "**/*.jar")
         compile group: 'ch.qos.logback', name: 'logback-classic', version: qosLogbackVersion
         testCompile project(':test:testcommon')
         testCompile group: 'org.apache.curator', name: 'curator-test', version: apacheCuratorVersion
@@ -637,6 +703,12 @@ project('test:integration') {
         // Workaround for intellij issue, since we cannot add both the compile dependency and the testRuntime
         // dependency of the client project into the compile scope of the integration tests
         compile files(project(':client').sourceSets.test.output)
+        compile project(':logstore:client')
+        compile project(':logstore:shared')
+        compile project(':logstore:server')
+        compile files(project(':logstore:server').sourceSets.main.output)
+        compile files(project(':logstore:shared').sourceSets.main.output)
+        compile files(project(':logstore:client').sourceSets.main.output)
     }
 
     task startServer(type: JavaExec) {
@@ -1434,6 +1506,9 @@ distributions {
                 exclude "logback.xml"
             }
             from (project(":segmentstore:server:host").installDist) {
+                exclude "logback.xml"
+            }
+            from (project(":logstore:server").installDist) {
                 exclude "logback.xml"
             }
             from (project(":cli:admin").installDist)

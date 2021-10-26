@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.pravega.segmentstore.storage.impl.bookkeeper;
+package io.pravega.common.concurrent;
 
 import com.google.common.base.Preconditions;
 import io.pravega.common.Exceptions;
@@ -27,7 +27,7 @@ import javax.annotation.concurrent.GuardedBy;
  * An Executor extension that runs the same task asynchronously, but never concurrently. If multiple requests are made
  * during an existing execution of the task, it will be invoked exactly once after the current execution completes.
  */
-class SequentialAsyncProcessor implements AutoCloseable {
+public class SequentialAsyncProcessor implements AutoCloseable {
     //region Members
 
     private final Runnable runnable;
@@ -53,7 +53,7 @@ class SequentialAsyncProcessor implements AutoCloseable {
      * @param failureCallback A Consumer to invoke if the runnable was unable to complete after applying the Retry policy.
      * @param executor        An Executor to run the task on.
      */
-    SequentialAsyncProcessor(Runnable runnable, Retry.RetryAndThrowBase<? extends Throwable> retry, Consumer<Throwable> failureCallback, ScheduledExecutorService executor) {
+    public SequentialAsyncProcessor(Runnable runnable, Retry.RetryAndThrowBase<? extends Throwable> retry, Consumer<Throwable> failureCallback, ScheduledExecutorService executor) {
         this.runnable = Preconditions.checkNotNull(runnable, "runnable");
         this.retry = Preconditions.checkNotNull(retry, "retry");
         this.failureCallback = Preconditions.checkNotNull(failureCallback, "failureCallback");
@@ -67,7 +67,7 @@ class SequentialAsyncProcessor implements AutoCloseable {
     /**
      * Executes one instance of the task, or queues it up at most once should the task be currently running.
      */
-    void runAsync() {
+    public void runAsync() {
         // Determine if a task is running. If so, record the fact we want to have it run again, otherwise reserve our spot.
         synchronized (this) {
             Exceptions.checkNotClosed(this.closed, this);
@@ -85,22 +85,22 @@ class SequentialAsyncProcessor implements AutoCloseable {
 
     private void runInternal() {
         this.retry.runInExecutor(this.runnable, this.executor)
-                  .whenComplete((r, ex) -> {
-                      if (ex != null) {
-                          // If we were unable to execute after all retries, invoke the failure callback.
-                          Callbacks.invokeSafely(this.failureCallback, ex, null);
-                      }
+                .whenComplete((r, ex) -> {
+                    if (ex != null) {
+                        // If we were unable to execute after all retries, invoke the failure callback.
+                        Callbacks.invokeSafely(this.failureCallback, ex, null);
+                    }
 
-                      boolean loopAgain;
-                      synchronized (this) {
-                          this.running = this.runAgain && !this.closed;
-                          this.runAgain = false;
-                          loopAgain = this.running;
-                      }
-                      if (loopAgain) {
-                          runInternal();
-                      }
-                  });
+                    boolean loopAgain;
+                    synchronized (this) {
+                        this.running = this.runAgain && !this.closed;
+                        this.runAgain = false;
+                        loopAgain = this.running;
+                    }
+                    if (loopAgain) {
+                        runInternal();
+                    }
+                });
     }
 
     @Override
