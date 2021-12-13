@@ -57,6 +57,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import javax.annotation.concurrent.GuardedBy;
@@ -740,6 +741,8 @@ class ContainerKeyIndex implements AutoCloseable {
         private final HashMap<Long, RecoveryTask> recoveryTasks = new HashMap<>();
         @GuardedBy("this")
         private final HashMap<Long, AsyncSemaphore> throttlers = new HashMap<>();
+        private final Predicate<DirectSegmentAccess> isSystemCriticalSegment = d -> d.getInfo().getType().isCritical()
+                && d.getInfo().getType().isSystem();
 
         @Override
         public void close() {
@@ -836,7 +839,7 @@ class ContainerKeyIndex implements AutoCloseable {
          * @param segment    The Segment to execute the task on.
          * @param toExecute  A Supplier that, when invoked, will execute a task and return a CompletableFuture which will
          *                   complete when the task is done.
-         * @param updateSize The number of bytes that this task requires.
+         * @param updateSize The number of bytes that this task requires.R
          * @param <T>        Return type.
          * @return A CompletableFuture that will be completed when the task is done. If executing immediately, this is the
          * result of toExecute, otherwise it will be a different Future which will be completed when toExecute completes.
@@ -852,6 +855,9 @@ class ContainerKeyIndex implements AutoCloseable {
                     this.throttlers.put(segment.getSegmentId(), throttler);
                 }
             }
+            log.info("Task to be executed on throttler for segment {}, ID:{}, Type: {}. Total used credits so far {} out of {}. Credits to be used for current task: " +
+                            "{} ",segment.getInfo().getName(),
+                    segment.getSegmentId(), segment.getInfo().getType(), throttler.getUsedCredits(), config.getMaxUnindexedLength(), updateSize);
 
             return throttler.run(toExecute, updateSize, false); // No need to force anything at this time.
         }
