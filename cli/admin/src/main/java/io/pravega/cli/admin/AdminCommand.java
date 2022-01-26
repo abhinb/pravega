@@ -44,10 +44,18 @@ import io.pravega.cli.admin.cluster.GetSegmentStoreByContainerCommand;
 import io.pravega.cli.admin.cluster.ListContainersCommand;
 import io.pravega.cli.admin.config.ConfigListCommand;
 import io.pravega.cli.admin.config.ConfigSetCommand;
+import io.pravega.cli.admin.segmentstore.FlushToStorageCommand;
 import io.pravega.cli.admin.segmentstore.GetSegmentAttributeCommand;
 import io.pravega.cli.admin.segmentstore.GetSegmentInfoCommand;
 import io.pravega.cli.admin.segmentstore.ReadSegmentRangeCommand;
 import io.pravega.cli.admin.segmentstore.UpdateSegmentAttributeCommand;
+import io.pravega.cli.admin.segmentstore.tableSegment.GetTableSegmentEntryCommand;
+import io.pravega.cli.admin.segmentstore.tableSegment.GetTableSegmentInfoCommand;
+import io.pravega.cli.admin.segmentstore.tableSegment.ListTableSegmentKeysCommand;
+import io.pravega.cli.admin.segmentstore.tableSegment.ModifyTableSegmentEntry;
+import io.pravega.cli.admin.segmentstore.tableSegment.PutTableSegmentEntryCommand;
+import io.pravega.cli.admin.segmentstore.tableSegment.SetSerializerCommand;
+import io.pravega.cli.admin.utils.AdminSegmentHelper;
 import io.pravega.cli.admin.utils.CLIConfig;
 import io.pravega.client.ClientConfig;
 import io.pravega.client.connection.impl.ConnectionPool;
@@ -287,6 +295,13 @@ public abstract class AdminCommand {
                         .put(ReadSegmentRangeCommand::descriptor, ReadSegmentRangeCommand::new)
                         .put(GetSegmentAttributeCommand::descriptor, GetSegmentAttributeCommand::new)
                         .put(UpdateSegmentAttributeCommand::descriptor, UpdateSegmentAttributeCommand::new)
+                        .put(FlushToStorageCommand::descriptor, FlushToStorageCommand::new)
+                        .put(GetTableSegmentInfoCommand::descriptor, GetTableSegmentInfoCommand::new)
+                        .put(GetTableSegmentEntryCommand::descriptor, GetTableSegmentEntryCommand::new)
+                        .put(PutTableSegmentEntryCommand::descriptor, PutTableSegmentEntryCommand::new)
+                        .put(SetSerializerCommand::descriptor, SetSerializerCommand::new)
+                        .put(ListTableSegmentKeysCommand::descriptor, ListTableSegmentKeysCommand::new)
+                        .put(ModifyTableSegmentEntry::descriptor, ModifyTableSegmentEntry::new)
                         .build());
 
         /**
@@ -384,13 +399,28 @@ public abstract class AdminCommand {
 
     @VisibleForTesting
     public SegmentHelper instantiateSegmentHelper(CuratorFramework zkClient) {
+        HostControllerStore hostStore = createHostControllerStore(zkClient);
+        ConnectionPool pool = createConnectionPool();
+        return new SegmentHelper(pool, hostStore, pool.getInternalExecutor());
+    }
+
+    @VisibleForTesting
+    public AdminSegmentHelper instantiateAdminSegmentHelper(CuratorFramework zkClient) {
+        HostControllerStore hostStore = createHostControllerStore(zkClient);
+        ConnectionPool pool = createConnectionPool();
+        return new AdminSegmentHelper(pool, hostStore, pool.getInternalExecutor());
+    }
+
+    private HostControllerStore createHostControllerStore(CuratorFramework zkClient) {
         HostMonitorConfig hostMonitorConfig = HostMonitorConfigImpl.builder()
                 .hostMonitorEnabled(true)
                 .hostMonitorMinRebalanceInterval(Config.CLUSTER_MIN_REBALANCE_INTERVAL)
                 .containerCount(getServiceConfig().getContainerCount())
                 .build();
-        HostControllerStore hostStore = HostStoreFactory.createStore(hostMonitorConfig, StoreClientFactory.createZKStoreClient(zkClient));
+        return HostStoreFactory.createStore(hostMonitorConfig, StoreClientFactory.createZKStoreClient(zkClient));
+    }
 
+    private ConnectionPool createConnectionPool() {
         ClientConfig.ClientConfigBuilder clientConfigBuilder = ClientConfig.builder()
                 .controllerURI(URI.create(getCLIControllerConfig().getControllerGrpcURI()));
 
@@ -405,8 +435,7 @@ public abstract class AdminCommand {
 
         ClientConfig clientConfig = clientConfigBuilder.build();
 
-        ConnectionPool pool = new ConnectionPoolImpl(clientConfig, new SocketConnectionFactoryImpl(clientConfig));
-        return new SegmentHelper(pool, hostStore, pool.getInternalExecutor());
+        return new ConnectionPoolImpl(clientConfig, new SocketConnectionFactoryImpl(clientConfig));
     }
 
     //endregion
