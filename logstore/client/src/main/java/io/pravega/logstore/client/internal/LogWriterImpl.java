@@ -12,8 +12,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
-package io.pravega.logstore.client.internal;
+ */package io.pravega.logstore.client.internal;
 
 import com.google.common.base.Preconditions;
 import io.netty.buffer.ByteBuf;
@@ -32,6 +31,7 @@ import io.pravega.logstore.client.QueueStatistics;
 import io.pravega.logstore.client.internal.connections.ClientConnectionFactory;
 import io.pravega.logstore.shared.LogChunkExistsException;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -104,9 +104,41 @@ public class LogWriterImpl implements LogWriter {
 
         // 2. (TBD - not done yet) Get all existing chunks and seal/fence them.
         // There are commands for it available (SealChunk).
+        sealLastChunk();
 
         // 3. Create new chunk.
         return rollover();
+    }
+
+    private CompletableFuture<Void> sealLastChunk() {
+        ListIterator<LogMetadata.ChunkMetadata> iterator = this.metadata.get().getChunks().listIterator(this.metadata.get().getChunks().size());
+        if (!iterator.hasPrevious()) {
+            log.info("No ending chunk found for log {}. Log Empty!", this.getLogId());
+            return null;
+        }
+        long chunkId = iterator.previous().getChunkId();
+        val w = new LogChunkWriterImpl(getLogId(), chunkId, this.config.getReplicationFactor(), this.logServerManager, getExecutor());
+        w.initWithConnection(this.connectionFactory)
+         .handle((r, ex) -> {
+             if (ex == null) {
+                 try {
+                     log.info("Sealing chunk {} on log {}", chunkId, getLogId());
+                     w.seal();
+                 } catch (Exception e) {
+                     log.error("Error while sealing chunk {} on log {} during init. Ex {}", chunkId, this.getLogId(), ex);
+                     w.close();
+                     throw new CompletionException(e);
+                 }
+             } else {
+                 log.error("Error while initializing writer for log {} while sealing last chunk {}. Ex {}", this.getLogId(), chunkId, ex);
+                 w.close();
+                 throw new CompletionException(ex);
+             }
+             log.info("close was called here . Returning null in seallastchunk");
+//             w.close(); // close this writer. was only used to seal. Writer will be initialized as part of rolling over.
+             return null;
+         });
+        return null;
     }
 
     @Override
@@ -336,7 +368,9 @@ public class LogWriterImpl implements LogWriter {
         return createNextChunk()
                 .thenComposeAsync(newWriter -> {
                     val currentChunk = this.activeChunk.getAndSet(new WriteChunk(newWriter));
+                    if( currentChunk == null ) log.info("previous chunk is null");
                     if (currentChunk != null) {
+                        log.info("previous chunk is {} and newly created chunk is {} on log {}",currentChunk.getWriter().getChunkId(), newWriter.getChunkId(), getLogId() );
                         try {
                             return currentChunk.seal();
                         } catch (Throwable ex) {
@@ -344,19 +378,27 @@ public class LogWriterImpl implements LogWriter {
                             throw ex;
                         }
                     }
+                    printLog(newWriter);
                     return CompletableFuture.completedFuture(null);
                 }, getExecutor())
                 .exceptionally(this::handleRolloverFailure)
                 .thenRunAsync(this.writeProcessor::runAsync, getExecutor());
     }
 
+    private void printLog(LogChunkWriter writer){
+        StringBuilder builder = new StringBuilder();
+        this.metadata.get().getChunks().forEach( meta -> builder.append(meta.getChunkId()).append(","));
+        log.info("this log {} has chunks {} and the new one created is {}",getLogId(), builder.toString(), writer.getChunkId());
+    }
+
     private CompletableFuture<LogChunkWriter> createNextChunk() {
-        log.debug("{}: Creating new chunk for log.", this.traceLogId);
+
         val result = new AtomicReference<LogChunkWriter>(null);
         return Futures.loop(
                 () -> result.get() == null,
                 () -> {
                     val chunkId = this.metadataManager.getNextChunkId();
+                    log.debug("{}: Creating new chunk {} for log {}.", this.traceLogId, chunkId,getLogId());
                     val w = new LogChunkWriterImpl(getLogId(), chunkId, this.config.getReplicationFactor(), this.logServerManager, getExecutor());
                     return w.initialize(this.connectionFactory)
                             .handle((r, ex) -> {

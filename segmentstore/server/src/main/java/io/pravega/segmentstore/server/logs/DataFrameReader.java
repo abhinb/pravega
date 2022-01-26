@@ -85,11 +85,13 @@ class DataFrameReader<T extends SequencedElement> implements CloseableIterator<D
     @Override
     public DataFrameRecord<T> getNext() throws DataCorruptionException, DurableDataLogException {
         Exceptions.checkNotClosed(this.closed, closed);
-
+        log.info("Inside DataFrameReader:-  getNext()");
         try {
             while (!this.dataFrameInputStream.isClosed()) {
+                log.info("DataFrmeInputStream not closed...");
                 try {
                     if (!this.dataFrameInputStream.beginRecord()) {
+                        log.info("DataFrameINutStream :-  not a beginRecord.");
                         // We've reached the end of the DataFrameInputStream.
                         return null;
                     }

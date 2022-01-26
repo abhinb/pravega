@@ -39,8 +39,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 
+@Slf4j
 public class LogStoreLog implements DurableDataLog {
     /**
      * Identical to BookKeeperLog.
@@ -124,13 +126,17 @@ public class LogStoreLog implements DurableDataLog {
         ReadIterator(@NonNull LogReader reader) {
             this.logReader = reader;
             this.itemIterator = Streams.stream(this.logReader.asIterator()).flatMap(Collection::stream).iterator();
+            log.info("In LogStoreLog: itemIterator is initialized . next  {}",itemIterator.hasNext());
         }
 
         @Override
         public ReadItem getNext() throws DurableDataLogException {
+            log.info("LogStoreLog: getNext called for LogStoreLog");
             if (this.itemIterator.hasNext()) {
-                return new EntryReadItem(this.itemIterator.next());
+                log.info("ItmeIterator has NExt? Return EntryReadItem");
+                return new EntryReadItem(this.itemIterator.next()); // next on List<Entry>
             } else {
+                log.info("ItmeIterator has NExt? no..returing null");
                 return null;
             }
         }

@@ -34,6 +34,8 @@ public interface LogChunkWriter extends AutoCloseable {
 
     CompletableFuture<Void> initialize(ClientConnectionFactory connectionFactory);
 
+    CompletableFuture<Void> initWithConnection(ClientConnectionFactory connectionFactory);
+
     CompletableFuture<Void> addEntry(Entry entry);
 
     CompletableFuture<Void> seal(); // Seals and closes.

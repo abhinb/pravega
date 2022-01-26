@@ -42,12 +42,17 @@ segmentstore)
     init_segmentstore
     exec /opt/pravega/bin/pravega-segmentstore
     ;;
+logstore)
+    init_kubernetes
+    init_segmentstore
+    exec /opt/pravega/bin/pravega-logstore
+    ;;
 standalone)
     init_standalone
     exec /opt/pravega/bin/pravega-standalone
     ;;
 *)
-    echo "Usage: $0 (controller|segmentstore|standalone)"
+    echo "Usage: $0 (controller|segmentstore|logstore|standalone)"
     exit 1
     ;;
 esac

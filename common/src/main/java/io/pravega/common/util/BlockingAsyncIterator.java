@@ -22,6 +22,7 @@ import lombok.Synchronized;
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * This class is a wrapper over async iterator that implements java.util.Iterator interface.
@@ -29,6 +30,7 @@ import java.util.NoSuchElementException;
  * iterator interface. 
  * This class is threadsafe but that has the drawback of blocking on asyncIterator's getNext within a lock. 
  */
+@Slf4j
 @ThreadSafe
 @VisibleForTesting
 public class BlockingAsyncIterator<T> implements Iterator<T> {
@@ -48,7 +50,9 @@ public class BlockingAsyncIterator<T> implements Iterator<T> {
     private void load() {
         if (next == null && canHaveNext) {
             next = asyncIterator.getNext().join();
+            log.info("In blockingasynciterator load method ..next is null");
             if (next == null) {
+                log.info("In blockingasynciterator load method ..next is null..can have next is false");
                 canHaveNext = false;
             }
         }
@@ -67,9 +71,11 @@ public class BlockingAsyncIterator<T> implements Iterator<T> {
         load();
         if (next != null) {
             T retVal = next;
+            log.info("In blockingasynciterator next method ..retval;s class is {} and retval is {}",next.getClass().getName(), next);
             next = null;
             return retVal;
         } else {
+            log.info("In blockingasynciterator next method,  next is null nosuhcelement ");
             assert !canHaveNext;
             throw new NoSuchElementException();
         }

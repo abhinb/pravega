@@ -24,10 +24,13 @@ import io.pravega.segmentstore.storage.DurableDataLogException;
 import io.pravega.segmentstore.storage.LogAddress;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import javax.annotation.concurrent.NotThreadSafe;
 import lombok.Getter;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
+import org.glassfish.jersey.internal.util.ExceptionUtils;
 
 /**
  * An InputStream that abstracts reading from DataFrames that were previously serialized into a DurableDataLog. This can
@@ -124,15 +127,17 @@ public class DataFrameInputStream extends InputStream {
         if (index < 0 || length < 0 | index + length > buffer.length) {
             throw new IndexOutOfBoundsException();
         }
-
+        log.info("in DataFrameInputStream read method.");
         int count = 0;
         while (count < length && !this.closed) {
             int r = this.currentEntry.getData().read(buffer, index + count, length - count);
             if (r >= 0) {
                 // We found data.
+                log.info("in DataFrameInputStream found datq.");
                 count += r;
             } else {
                 // Reached the end of the current entry.
+                log.info("in DataFrameInputStream checkEndOFRecord.");
                 checkEndOfRecord();
                 fetchNextEntry();
             }
@@ -164,7 +169,7 @@ public class DataFrameInputStream extends InputStream {
             if (this.currentEntry != null && !this.prefetchedEntry) {
                 endRecord();
             }
-
+            log.info("Inside dataframeinputstream :- fetching Next entry");
             fetchNextEntry();
             return true;
         } catch (NoMoreRecordsException ex) {
@@ -212,6 +217,7 @@ public class DataFrameInputStream extends InputStream {
 
     private void fetchNextEntry() throws IOException, DurableDataLogException {
         Exceptions.checkNotClosed(this.closed, this);
+        log.info("inside fetchNextEntry");
         if (this.prefetchedEntry) {
             assert this.currentEntry != null : "prefetchEntry==true, but currentEntry==null";
             this.prefetchedEntry = false;
@@ -220,8 +226,9 @@ public class DataFrameInputStream extends InputStream {
 
         while (!this.closed) {
             DataFrame.DataFrameEntry nextEntry = getNextFrameEntry();
-
+            log.info("getnextframeentry called");
             if (nextEntry == null) {
+                log.info("nextEntry is null...closing and returning exception");
                 // 'null' means no more entries (or frames). Since we are still in the while loop, it means we were in the
                 // middle of an entry that hasn't been fully committed. We need to discard it and mark the end of the
                 // DataFrameInputStream.
@@ -253,13 +260,14 @@ public class DataFrameInputStream extends InputStream {
 
                 continue;
             }
-
+            log.info("setting currentframe entry");
             setCurrentFrameEntry(nextEntry);
             break;
         }
     }
 
     private void setCurrentFrameEntry(DataFrame.DataFrameEntry nextEntry) throws IOException {
+        log.info("inside setCurrentFrameEntry");
         long dataFrameSequence = nextEntry.getFrameAddress().getSequence();
         LogAddress lastUsedAddress = this.currentRecordBuilder.getLastUsedDataFrameAddress();
         if (lastUsedAddress != null && dataFrameSequence < lastUsedAddress.getSequence()) {
@@ -284,6 +292,7 @@ public class DataFrameInputStream extends InputStream {
 
     private DataFrame.DataFrameEntry getNextFrameEntry() throws DurableDataLogException, IOException {
         // Check to see if we are in the middle of a frame, in which case, just return the next element.
+        log.info("In GetNextFrameEntry ");
         DataFrame.DataFrameEntry result;
         if (this.currentFrameContents != null) {
             result = this.currentFrameContents.getNext();
@@ -292,10 +301,12 @@ public class DataFrameInputStream extends InputStream {
             }
         }
 
+        log.info("Calling getnext frame ");
         // We need to fetch a new frame.
         this.currentFrameContents = getNextFrame();
         if (this.currentFrameContents == null) {
             // No more frames to retrieve
+            log.info("currentframe is null.. returning null");
             return null;
         } else {
             // We just got a new frame.
@@ -313,27 +324,43 @@ public class DataFrameInputStream extends InputStream {
     }
 
     private DataFrame.DataFrameEntryIterator getNextFrame() throws DurableDataLogException, IOException {
-        DurableDataLog.ReadItem nextItem = this.reader.getNext();
+
+        DurableDataLog.ReadItem nextItem = null;
+        StringWriter sw = new StringWriter();
+        try {
+            nextItem = this.reader.getNext();
+        } catch (Throwable e) {
+            e.printStackTrace(new PrintWriter(sw));
+            log.info("There was an error while calling getNext {}",e);
+            log.info("There was an error while calling getNext {}", sw.toString());
+            log.info("There was an error while calling getNext {}",e.getCause());
+        }
+        log.info("Inside getNextFrame:- read the next item");
         if (nextItem == null) {
             // We have reached the end. Stop here.
+            log.info("Inside getNextFrame:- next item is null");
             return null;
         }
-
+        log.info("Inside getNextFrame:- next item is not null");
         DataFrame.DataFrameEntryIterator frameContents;
         try {
             frameContents = DataFrame.read(nextItem.getPayload(), nextItem.getLength(), nextItem.getAddress());
+            log.info("Inside getNextFrame:- reading frame contents");
         } catch (SerializationException ex) {
             throw new SerializationException(String.format("Unable to deserialize DataFrame. LastReadFrameSequence =  %d.",
                     this.lastReadFrameSequence), ex);
         }
 
         long sequence = nextItem.getAddress().getSequence();
+        log.info("Inside getNextFrame:- seq no of next item is {}",sequence);
         if (sequence <= this.lastReadFrameSequence) {
+            log.info("Inside getNextFrame:- serializtion exception");
             // FrameSequence must be a strictly monotonically increasing number.
             throw new SerializationException(String.format("Found DataFrame out of order. Expected frame sequence greater than %d, found %d.",
                     this.lastReadFrameSequence, sequence));
         }
 
+        log.info("Inside getNextFrame:- last read frame seq is {}. Returning",sequence);
         this.lastReadFrameSequence = sequence;
         return frameContents;
     }

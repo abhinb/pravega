@@ -69,6 +69,7 @@ public class LogChunkReplicaReaderImpl implements LogChunkReader {
     @Override
     public CompletableFuture<Void> initialize(@NonNull ClientConnectionFactory connectionFactory) {
         Preconditions.checkState(this.state.connection.get() == null, "Already initialized.");
+        log.info("Intializing logchunkreplicareaderImpl");
         try {
             connectionFactory.establishConnection(this.logStoreUri, this.responseProcessor)
                     .thenAccept(connection -> {
@@ -90,6 +91,7 @@ public class LogChunkReplicaReaderImpl implements LogChunkReader {
     @Override
     public long getEntryCount() {
         ensureInitialized();
+        log.info("intialized ...getting entrycount");
         return this.state.getEntryCount();
     }
 
@@ -171,8 +173,10 @@ public class LogChunkReplicaReaderImpl implements LogChunkReader {
         }
 
         CompletableFuture<List<Entry>> readNext() {
+            log.info("LogChunkReplicaReader: readNext called");
             if (this.nextEntryId.get() >= getEntryCount()) {
                 // End of the chunk.
+                log.info("in readnext..closing logchunkreader...nextentryid {} greater than entrycount {}",this.nextEntryId.get(), getEntryCount());
                 close();
                 return CompletableFuture.completedFuture(null);
             }
@@ -182,6 +186,7 @@ public class LogChunkReplicaReaderImpl implements LogChunkReader {
 
             try {
                 val request = new ReadEntries(0L, chunkId, getNextEntryId());
+                log.info("Read entrries sent for chunk {} and next entryid {} ",chunkId, getNextEntryId());
                 getConnection().send(request);
             } catch (Throwable ex) {
                 this.pendingRead.compareAndSet(result, null);
@@ -205,6 +210,7 @@ public class LogChunkReplicaReaderImpl implements LogChunkReader {
                 }
 
                 this.pendingRead.compareAndSet(result, null);
+                log.info("completing read ");
                 result.complete(entries);
             } finally {
                 this.pendingRead.compareAndSet(result, null);

@@ -36,6 +36,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -98,6 +99,31 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
             return Futures.failedFuture(ex);
         }
     }
+
+    public CompletableFuture<Void> initWithConnection(@NonNull ClientConnectionFactory connectionFactory) {
+        val responseProcessor = new ResponseProcessor(this.traceLogId, this::failAndClose);
+        try {
+            connectionFactory.establishConnection(logStoreUri, responseProcessor)
+                             .thenAccept(connection -> {
+                                 this.connection = connection;
+                             })
+                             .whenComplete((r, ex) -> {
+                                 if (ex != null) {
+                                     log.error("Error establishing connection {}",ex);
+                                     close();
+                                     throw new CompletionException(ex);
+                                 }
+                                 log.info("Intialized replica writer");
+                                 this.initialized.complete(null);
+                             });
+
+            return this.initialized;
+        } catch (Throwable ex) {
+            close();
+            return Futures.failedFuture(ex);
+        }
+    }
+
 
     @Override
     public long getLastAckedEntryId() {
@@ -163,7 +189,7 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
     public CompletableFuture<Void> seal() {
         Exceptions.checkNotClosed(this.closed, this);
         Preconditions.checkState(isInitialized(), "Not initialized.");
-
+        log.info("in logchunkreplicawriter:  sealing current chunk {}",this.chunkId);
         synchronized (this.lock) {
             if (this.sealed != null) {
                 return this.sealed;
@@ -172,7 +198,7 @@ public class LogChunkReplicaWriterImpl implements LogChunkWriter {
                 this.sealed = new CompletableFuture<>();
                 val connection = this.connection;
                 val seal = new SealChunk(0L, this.chunkId);
-                log.trace("{}: Sending SealChunk: {}", this, seal);
+                log.info("{}: Sending SealChunk: {}", this, seal);
                 connection.send(seal);
                 return this.sealed;
             } catch (Throwable ex) {

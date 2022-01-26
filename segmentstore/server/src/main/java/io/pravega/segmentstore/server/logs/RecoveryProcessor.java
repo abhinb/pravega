@@ -129,6 +129,7 @@ class RecoveryProcessor {
      */
     private int recoverAllOperations(OperationMetadataUpdater metadataUpdater) throws Exception {
         long traceId = LoggerHelpers.traceEnterWithContext(log, this.traceObjectId, "recoverAllOperations");
+        log.info("Inside recoverAllOperations");
         int skippedOperationCount = 0;
         int skippedDataFramesCount = 0;
         int recoveredItemCount = 0;
@@ -153,6 +154,7 @@ class RecoveryProcessor {
                             this.traceObjectId, dataFrameRecord.getItem().getSequenceNumber(), skippedOperationCount, skippedDataFramesCount);
                     break;
                 } else if (dataFrameRecord.isLastFrameEntry()) {
+                    log.info("skippeddataframes ....");
                     skippedDataFramesCount++;
                 }
 

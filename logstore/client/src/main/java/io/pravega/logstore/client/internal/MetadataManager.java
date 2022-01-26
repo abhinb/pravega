@@ -49,17 +49,16 @@ public class MetadataManager {
         synchronized (this.lock) {
             val path = MetadataManager.ZK_PATH;
             for (int i = 0; i < this.config.getZkRetryCount(); i++) {
-                if (this.metadata == null) {
-                    //need log here
-                    this.metadata = new Metadata(0L);
-                }
-                Metadata m = get(path, Metadata.SERIALIZER::deserialize, this.metadata );
-                if ( m != this.metadata ) // if we get back the same default we passed like '0' initially, then skip incrementing
-                    this.metadata = m.withNextChunkId();
+                this.metadata = get(path, Metadata.SERIALIZER::deserialize, new Metadata(0L));
+                log.info("Metadata is assigned with version {} and chunkID {} in iteration {}", this.metadata.getVersion(), this.metadata.getNextChunkId(), i);
+                this.metadata = this.metadata.withNextChunkId();
                 if (set(this.metadata, path, Metadata.SERIALIZER::serialize)) {
+                    log.info("return metadata with next chunk id with version {}  and id {}",this.metadata.getVersion(), this.metadata.getNextChunkId());
                     return this.metadata.getNextChunkId();
                 } else {
                     log.debug("Conflict while trying to get next chunk id. Attempt {}/{}.", i + 1, this.config.getZkRetryCount());
+                    this.metadata = get(path, Metadata.SERIALIZER::deserialize, this.metadata);
+                    log.info("conflicted chunk with version {}  and id {}",this.metadata.getVersion(), this.metadata.getNextChunkId());
                 }
             }
 

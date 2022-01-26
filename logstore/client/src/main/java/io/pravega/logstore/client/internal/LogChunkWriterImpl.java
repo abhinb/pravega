@@ -98,6 +98,23 @@ public class LogChunkWriterImpl implements LogChunkWriter {
     }
 
     @Override
+    public CompletableFuture<Void> initWithConnection(ClientConnectionFactory connectionFactory) {
+        val futures = this.replicaWriters.stream()
+                                         .map(w -> w.initWithConnection(connectionFactory))
+                                         .collect(Collectors.toList());
+        return Futures.allOf(futures)
+                      .whenComplete((r, ex) -> {
+                          if (ex != null) {
+                              log.error("{}: Initialization failure. Closing.", this.traceLogId, ex);
+                              close();
+                              throw new CompletionException(ex);
+                          } else {
+                              log.info("{}: All replica writers initialized.", this.traceLogId);
+                          }
+                      });
+    }
+
+    @Override
     public CompletableFuture<Void> addEntry(Entry entry) {
         if (this.sealed) {
             throw new LogChunkSealedException(this.chunkId);
@@ -125,6 +142,7 @@ public class LogChunkWriterImpl implements LogChunkWriter {
 
     @Override
     public CompletableFuture<Void> seal() {
+        log.info("Calling seal on on replica Writers");
         this.sealed = true;
         val futures = new ArrayList<CompletableFuture<Void>>(this.replicaWriters.size());
         for (val w : this.replicaWriters) {
