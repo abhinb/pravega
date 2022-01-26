@@ -19,11 +19,17 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.pravega.auth.AuthenticationException;
 import io.pravega.auth.TokenExpiredException;
+import io.pravega.client.ClientConfig;
 import io.pravega.client.connection.impl.ClientConnection;
 import io.pravega.client.connection.impl.ConnectionFactory;
 import io.pravega.client.connection.impl.ConnectionPool;
+import io.pravega.client.connection.impl.ConnectionPoolImpl;
 import io.pravega.client.connection.impl.Flow;
+import io.pravega.client.connection.impl.RawClient;
+import io.pravega.client.connection.impl.SocketConnectionFactoryImpl;
+import io.pravega.client.control.impl.ModelHelper;
 import io.pravega.client.stream.ScalingPolicy;
+import io.pravega.client.stream.impl.ConnectionClosedException;
 import io.pravega.client.tables.impl.HashTableIteratorItem;
 import io.pravega.client.tables.impl.TableSegmentEntry;
 import io.pravega.client.tables.impl.TableSegmentKey;
@@ -33,27 +39,36 @@ import io.pravega.common.cluster.Host;
 import io.pravega.common.concurrent.Futures;
 import io.pravega.controller.store.host.HostControllerStore;
 import io.pravega.controller.stream.api.grpc.v1.Controller;
+import io.pravega.controller.util.Config;
 import io.pravega.shared.protocol.netty.Append;
 import io.pravega.shared.protocol.netty.ConnectionFailedException;
 import io.pravega.shared.protocol.netty.PravegaNodeUri;
+import io.pravega.shared.protocol.netty.Reply;
 import io.pravega.shared.protocol.netty.ReplyProcessor;
 import io.pravega.shared.protocol.netty.Request;
 import io.pravega.shared.protocol.netty.WireCommand;
+import io.pravega.shared.protocol.netty.WireCommandType;
 import io.pravega.shared.protocol.netty.WireCommands;
+import io.pravega.shared.security.auth.DefaultCredentials;
 import io.pravega.test.common.AssertExtensions;
 
+import java.io.IOException;
+import java.net.URI;
 import java.time.Duration;
 import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -756,6 +771,104 @@ public class SegmentHelperTest extends ThreadPooledTestSuite {
 
         testConnectionFailure(factory, futureSupplier);
     }
+
+    private ConnectionPool createConnectionPool() {
+        ClientConfig.ClientConfigBuilder clientConfigBuilder = ClientConfig.builder()
+                                                                           .controllerURI(URI.create("tcp://127.0.1.1:12345"));
+        ClientConfig clientConfig = clientConfigBuilder.build();
+        return new ConnectionPoolImpl(clientConfig, new SocketConnectionFactoryImpl(clientConfig));
+    }
+
+    @Test
+    public void testHash() throws InterruptedException, IOException {
+
+        final WireCommandType type = WireCommandType.CREATE_TABLE_SEGMENT;
+
+        RawClient connection = new RawClient(new PravegaNodeUri("127.0.1.1", 12345), createConnectionPool());
+        final long requestId = connection.getFlow().asLong();
+
+        WireCommands.CreateTableSegment request = new WireCommands.CreateTableSegment(requestId, "testtable", false, 0, "", 0);
+        AtomicReference<Duration> timeout = new AtomicReference<>(Duration.ofSeconds(Config.REQUEST_TIMEOUT_SECONDS_SEGMENT_STORE));
+        CompletableFuture<Reply> future = Futures.futureWithTimeout(() -> connection.sendRequest(request.getRequestId(), request),
+                timeout.get(), "request", executorService());
+
+        future.exceptionally(e -> {
+            System.out.println("exceptionnnn......");
+            processAndRethrowException(request.getRequestId(), request, e);
+            return null;
+        });
+
+        // update table
+        boolean bring_down = false;
+        Random rd = new Random();
+        while(true) {
+            updateTestTable(connection, rd);
+            if(!bring_down){
+                Runtime.getRuntime().exec("docker pause a8990e688ece");
+                bring_down=!bring_down;
+            }
+        }
+    }
+
+    private void updateTestTable(RawClient connection, Random rd){
+
+        byte[] arr = new byte[100];
+        rd.nextBytes(arr);
+        List<TableSegmentEntry> entries = Arrays.asList(TableSegmentEntry.unversioned("k".getBytes(), arr),
+                                                        TableSegmentEntry.unversioned("k1".getBytes(), arr)
+                );
+
+        final WireCommandType type = WireCommandType.UPDATE_TABLE_ENTRIES;
+        List<Map.Entry<WireCommands.TableKey, WireCommands.TableValue>> wireCommandEntries = entries.stream().map(te -> {
+            final WireCommands.TableKey key = new WireCommands.TableKey(te.getKey().getKey(),te.getKey().getVersion().getSegmentVersion());
+            final WireCommands.TableValue value = new WireCommands.TableValue(te.getValue());
+            return new AbstractMap.SimpleImmutableEntry<>(key, value);
+        }).collect(Collectors.toList());
+
+        final long requestId = connection.getFlow().asLong();
+        WireCommands.UpdateTableEntries request = new WireCommands.UpdateTableEntries(requestId, "testtable", "",
+                new WireCommands.TableEntries(wireCommandEntries), WireCommands.NULL_TABLE_SEGMENT_OFFSET);
+
+        AtomicReference<Duration> timeout = new AtomicReference<>(Duration.ofSeconds(Config.REQUEST_TIMEOUT_SECONDS_SEGMENT_STORE));
+
+        CompletableFuture<Reply> future = Futures.futureWithTimeout(() -> connection.sendRequest(request.getRequestId(), request),
+                timeout.get(), "request", executorService());
+
+        future.exceptionally(e -> {
+            System.out.println("exceptionnnn updateTestTable......");
+            processAndRethrowException(request.getRequestId(), request, e);
+            return null;
+        });
+
+    }
+
+    <T extends Request & WireCommand> void processAndRethrowException(long callerRequestId, T request, Throwable e) {
+        Throwable unwrap = Exceptions.unwrap(e);
+        WireCommandFailedException ex = null;
+        if (unwrap instanceof ConnectionFailedException || unwrap instanceof ConnectionClosedException) {
+//            log.warn(callerRequestId, "Connection dropped {}", request.getRequestId());
+            throw new WireCommandFailedException(request.getType(), WireCommandFailedException.Reason.ConnectionFailed);
+        } else if (unwrap instanceof AuthenticationException) {
+//            log.warn(callerRequestId, "Authentication Exception {}", request.getRequestId());
+            throw new WireCommandFailedException(request.getType(), WireCommandFailedException.Reason.AuthFailed);
+        } else if (unwrap instanceof TokenExpiredException) {
+//            log.warn(callerRequestId, "Token expired {}", request.getRequestId());
+            throw new WireCommandFailedException(request.getType(), WireCommandFailedException.Reason.AuthFailed);
+        } else if (unwrap instanceof TimeoutException) {
+//            log.warn(callerRequestId, "Request timed out. {}", request.getRequestId());
+            throw new WireCommandFailedException(request.getType(), WireCommandFailedException.Reason.ConnectionFailed);
+        } else {
+//            log.error(callerRequestId, "Request failed {}", request.getRequestId(), e);
+            throw new CompletionException(e);
+        }
+    }
+
+//    public static void main(String[] args){
+//
+//        System.out.println("craeting testtable table segment");
+//        new SegmentHelperTest().tableSegment();
+//
+//    }
 
     @Test
     public void testReadTableEntries() {

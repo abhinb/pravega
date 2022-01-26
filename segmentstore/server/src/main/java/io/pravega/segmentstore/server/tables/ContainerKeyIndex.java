@@ -36,7 +36,9 @@ import io.pravega.segmentstore.contracts.tables.TableKey;
 import io.pravega.segmentstore.contracts.tables.TableSegmentNotEmptyException;
 import io.pravega.segmentstore.server.CacheManager;
 import io.pravega.segmentstore.server.DirectSegmentAccess;
+import io.pravega.segmentstore.server.SegmentContainer;
 import io.pravega.segmentstore.server.SegmentMetadata;
+import io.pravega.segmentstore.server.SegmentStoreMetrics;
 import io.pravega.segmentstore.server.reading.AsyncReadResultProcessor;
 import java.io.IOException;
 import java.time.Duration;
@@ -742,9 +744,6 @@ class ContainerKeyIndex implements AutoCloseable {
         private final HashMap<Long, RecoveryTask> recoveryTasks = new HashMap<>();
         @GuardedBy("this")
         private final HashMap<Long, AsyncSemaphore> throttlers = new HashMap<>();
-        private final Predicate<DirectSegmentAccess> isSystemCriticalSegment = d -> d.getInfo().getType().isCritical()
-                && d.getInfo().getType().isSystem();
-
         // Differentiate the throttling credits between system-critical and other Segments.
         private final Predicate<DirectSegmentAccess> isSystemCriticalSegment = d -> d.getInfo().getType().isCritical()
                 && d.getInfo().getType().isSystem();
@@ -862,9 +861,13 @@ class ContainerKeyIndex implements AutoCloseable {
                     this.throttlers.put(segment.getSegmentId(), throttler);
                 }
             }
-            log.info("Task to be executed on throttler for segment {}, ID:{}, Type: {}. Total used credits so far {} out of {}. Credits to be used for current task: " +
-                            "{} ",segment.getInfo().getName(),
-                    segment.getSegmentId(), segment.getInfo().getType(), throttler.getUsedCredits(), config.getMaxUnindexedLength(), updateSize);
+            log.info("[{}{}] Task to be executed on throttler for segment {}, ID:{}, Type: {}. Total used credits so far {} out of {}. Credits to be used for current task: " +
+                            "{} ",containerId,segment.getSegmentId(),segment.getInfo().getName(),
+                    segment.getSegmentId(), segment.getInfo().getType(), throttler.getUsedCredits(), config.getSystemCriticalMaxUnindexedLength(), updateSize);
+
+            if(isSystemCriticalSegment.test(segment)){
+                SegmentStoreMetrics.systemCriticalSegmentUnindexedBytes(segment.getInfo().getName(), throttler.getUsedCredits());
+            }
 
             if (isSystemCriticalSegment.test(segment) && throttler.getUsedCredits() + updateSize > totalCredits) {
                 log.warn("{}: System-critical TableSegment {} is blocked due to reaching max unindexed size.", traceObjectId, segment.getSegmentId());

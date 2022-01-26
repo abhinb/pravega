@@ -27,6 +27,7 @@ import io.pravega.segmentstore.storage.metadata.MetadataTransaction;
 import io.pravega.segmentstore.storage.metadata.ReadIndexBlockMetadata;
 import io.pravega.segmentstore.storage.metadata.SegmentMetadata;
 import io.pravega.shared.NameUtils;
+import java.util.concurrent.ScheduledExecutorService;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 
@@ -111,6 +112,7 @@ class ReadOperation implements Callable<CompletableFuture<Integer>> {
                                         // Now read.
                                         return readData(txn);
                                     }, chunkedSegmentStorage.getExecutor())
+                                    .thenComposeAsync(vv -> createDelayFuture(2000), chunkedSegmentStorage.getExecutor())
                                     .exceptionally(ex -> {
                                         log.debug("{} read - exception op={}, segment={}, offset={}, bytesRead={}.",
                                                 chunkedSegmentStorage.getLogPrefix(), System.identityHashCode(this), handle.getSegmentName(), offset, totalBytesRead);
@@ -125,6 +127,10 @@ class ReadOperation implements Callable<CompletableFuture<Integer>> {
                                     }, chunkedSegmentStorage.getExecutor());
                         }, chunkedSegmentStorage.getExecutor()),
                 chunkedSegmentStorage.getExecutor());
+    }
+
+    private CompletableFuture<Void> createDelayFuture(int millis) {
+        return Futures.delayedFuture(Duration.ofMillis(millis), (ScheduledExecutorService) chunkedSegmentStorage.getExecutor());
     }
 
     private void logEnd() {

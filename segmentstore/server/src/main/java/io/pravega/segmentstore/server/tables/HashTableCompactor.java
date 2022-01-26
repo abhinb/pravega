@@ -26,11 +26,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.stream.Collectors;
 import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 
 /**
  * {@link TableCompactor} for {@link HashTableSegmentLayout} implementations.
  */
+@Slf4j
 class HashTableCompactor extends TableCompactor {
     //region Members
 
@@ -103,10 +105,12 @@ class HashTableCompactor extends TableCompactor {
         // candidates are still eligible for compaction.
         val br = TableBucketReader.key(this.segment, this.indexReader::getBackpointerOffset, this.executor);
         val candidateBuckets = args.candidatesByHash.keySet().iterator();
+        log.info("HashTableCompactor[{}]: about to loop to exclude obsolete",this.traceLogId);
         return Futures.loop(
                 candidateBuckets::hasNext,
                 () -> {
                     val bucketId = candidateBuckets.next();
+                    log.info("HashTableCompactor[{}]: excluding obsolete..fine eligible keys in candidate bucket {}", this.traceLogId, bucketId);
                     long bucketOffset = buckets.get(bucketId).getSegmentOffset();
                     return br.findAll(bucketOffset, args::handleExistingKey, timer);
                 },

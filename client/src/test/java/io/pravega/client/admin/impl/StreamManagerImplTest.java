@@ -18,6 +18,7 @@ package io.pravega.client.admin.impl;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import io.pravega.client.ClientConfig;
+import io.pravega.client.EventStreamClientFactory;
 import io.pravega.client.admin.KeyValueTableInfo;
 import io.pravega.client.admin.KeyValueTableManager;
 import io.pravega.client.admin.StreamInfo;
@@ -27,12 +28,16 @@ import io.pravega.client.connection.impl.ConnectionPoolImpl;
 import io.pravega.client.control.impl.Controller;
 import io.pravega.client.control.impl.ControllerFailureException;
 import io.pravega.client.stream.DeleteScopeFailedException;
+import io.pravega.client.stream.EventStreamWriter;
+import io.pravega.client.stream.EventWriterConfig;
 import io.pravega.client.stream.InvalidStreamException;
 import io.pravega.client.stream.ReaderGroupConfig;
 import io.pravega.client.stream.ReaderGroupNotFoundException;
 import io.pravega.client.stream.ScalingPolicy;
 import io.pravega.client.stream.Stream;
 import io.pravega.client.stream.StreamConfiguration;
+import io.pravega.client.stream.impl.ByteArraySerializer;
+import io.pravega.client.stream.impl.JavaSerializer;
 import io.pravega.client.stream.impl.StreamImpl;
 import io.pravega.client.stream.impl.StreamSegments;
 import io.pravega.client.stream.mock.MockConnectionFactoryImpl;
@@ -47,14 +52,19 @@ import io.pravega.shared.protocol.netty.PravegaNodeUri;
 import io.pravega.shared.protocol.netty.WireCommands;
 import io.pravega.test.common.AssertExtensions;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import lombok.Cleanup;
 import org.junit.After;
 import org.junit.Assert;
@@ -168,6 +178,37 @@ public class StreamManagerImplTest {
         assertEquals(stream, info.getHeadStreamCut().asImpl().getStream());
         assertEquals(3, info.getHeadStreamCut().asImpl().getPositions().size());
         assertFalse(info.isSealed());
+    }
+
+
+    @Test
+    public void testWrite(){
+        StreamConfiguration streamConfig = StreamConfiguration.builder()
+                                                              .scalingPolicy(ScalingPolicy.fixed(1))
+                                                              .build();
+        URI controllerURI = URI.create("tcp://localhost:9090");
+
+        try (StreamManager streamManager = StreamManager.create(controllerURI)) {
+            streamManager.createScope("testscope");
+            streamManager.createStream("testscope", "teststream", streamConfig);
+        }
+        ClientConfig clientConfig = ClientConfig.builder()
+                                                .controllerURI(controllerURI).build();
+        EventWriterConfig writerConfig = EventWriterConfig.builder().build();
+        EventStreamClientFactory factory = EventStreamClientFactory
+                .withScope("testscope", clientConfig);
+        EventStreamWriter<byte[]> writer = factory
+                .createEventWriter("teststream", new ByteArraySerializer(), writerConfig);
+        Random rd = new Random();
+        byte[] arr = new byte[100];
+        while(true) {
+            int i = 0;
+            while(++i <= 10) {
+                rd.nextBytes(arr);
+                writer.writeEvent("rk", arr);
+            }
+            writer.flush();
+        }
     }
 
     @Test(timeout = 10000)

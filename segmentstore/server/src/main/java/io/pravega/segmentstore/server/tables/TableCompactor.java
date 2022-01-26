@@ -41,6 +41,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
+import lombok.Builder;
 import lombok.Data;
 import lombok.Getter;
 import lombok.NonNull;
@@ -129,6 +130,7 @@ abstract class TableCompactor {
     CompletableFuture<Boolean> isCompactionRequired() {
         final long startOffset = getCompactionStartOffset();
         final long lastIndexOffset = getLastIndexedOffset();
+        log.info("TableCompactor[{}]: isCompactionRequired: start offset is {}. LastIndexed offset is {}. MaxCompactionsize configured is {}",this.traceLogId,startOffset, lastIndexOffset, this.config.getMaxCompactionSize());
         if (startOffset + this.config.getMaxCompactionSize() >= lastIndexOffset) {
             // Either:
             // 1. Nothing was indexed
@@ -142,6 +144,7 @@ abstract class TableCompactor {
         return getUniqueEntryCount()
                 .thenApply(entryCount -> {
                     final long utilization = totalEntryCount == 0 ? 100 : MathHelpers.minMax(Math.round(100.0 * entryCount / totalEntryCount), 0, 100);
+                    log.info("TableCompactor[{}]: isCompactionRequired: utilization is {}. utilizationthreshold is {} . uniqueentrycount is {} and totalentrycount is {}",this.traceLogId, utilization, utilizationThreshold, entryCount, totalEntryCount);
                     return utilization < utilizationThreshold;
                 });
     }
@@ -200,6 +203,7 @@ abstract class TableCompactor {
      * </ul>
      */
     CompletableFuture<Void> compact(TimeoutTimer timer) {
+        log.debug("{} : Inside compact",this.traceLogId);
         long startOffset = getCompactionStartOffset();
         int maxLength = (int) Math.min(this.config.getMaxCompactionSize(), getLastIndexedOffset() - startOffset);
         if (startOffset < 0 || maxLength < 0) {
@@ -212,7 +216,7 @@ abstract class TableCompactor {
             log.debug("{}: Up to date.", this.traceLogId);
             return CompletableFuture.completedFuture(null);
         }
-
+        log.debug("{} : Compaction is being triggered",this.traceLogId);
         // Read the Table Entries beginning at the specified offset, without exceeding the given maximum length.
         return getRetryPolicy().runAsync(
                 () -> readCandidates(startOffset, maxLength, timer)
@@ -250,6 +254,7 @@ abstract class TableCompactor {
      */
     @SneakyThrows(SerializationException.class)
     private CompactionArgs parseEntries(BufferView inputData, long startOffset, int maxLength) {
+        log.info("TableCompactor[{}]: parsing entries from {} to {}",this.traceLogId, startOffset, maxLength);
         val result = newCompactionArgs(startOffset);
         final long maxOffset = startOffset + maxLength;
         val input = inputData.getBufferViewReader();
@@ -260,6 +265,7 @@ abstract class TableCompactor {
                 // We only care about updates, and not removals.
                 if (!e.getHeader().isDeletion()) {
                     // Deduplicate (based on key).
+                    log.info("TableCompactor[{}]: adding  candidate with endoffset {} to result ",this.traceLogId, result.getEndOffset());
                     result.add(new Candidate(result.getEndOffset(), TableEntry.versioned(e.getKey(), e.getValue(), e.getVersion())));
                 }
 
@@ -293,6 +299,7 @@ abstract class TableCompactor {
         val totalLength = new AtomicInteger(0);
         args.getAll().stream().sorted(Comparator.comparingLong(c -> c.entry.getKey().getVersion()))
                 .forEach(c -> {
+                    log.info("TableCompactor[{}]: collecting candidate for copying. offset: {}",this.traceLogId,c.segmentOffset);
                     toWrite.add(c.entry);
                     generateIndexUpdates(c, totalLength.get(), attributes);
                     totalLength.addAndGet(SERIALIZER.getUpdateLength(c.entry));
@@ -302,6 +309,7 @@ abstract class TableCompactor {
         CompletableFuture<?> result;
         if (totalLength.get() == 0) {
             // Nothing to do; update the necessary segment attributes.
+            log.info("TableCompactor[{}]: no candidates to copy",this.traceLogId);
             assert toWrite.size() == 0;
             result = this.segment.updateAttributes(attributes, timer.getRemaining());
         } else {

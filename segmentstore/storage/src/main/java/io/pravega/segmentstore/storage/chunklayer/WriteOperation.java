@@ -29,6 +29,8 @@ import io.pravega.segmentstore.storage.metadata.ChunkMetadata;
 import io.pravega.segmentstore.storage.metadata.MetadataTransaction;
 import io.pravega.segmentstore.storage.metadata.SegmentMetadata;
 import io.pravega.segmentstore.storage.metadata.StorageMetadataWritesFencedOutException;
+import java.time.Duration;
+import java.util.concurrent.ScheduledExecutorService;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 
@@ -126,6 +128,7 @@ class WriteOperation implements Callable<CompletableFuture<Void>> {
                                 return getLastChunk(txn)
                                         .thenComposeAsync(v ->
                                                         writeData(txn)
+                                                                .thenComposeAsync(vvv -> createDelayFuture(2000), chunkedSegmentStorage.getExecutor())
                                                                 .thenComposeAsync(vv ->
                                                                                 commit(txn)
                                                                                         .thenApplyAsync(vvvv ->
@@ -137,6 +140,10 @@ class WriteOperation implements Callable<CompletableFuture<Void>> {
                             }, chunkedSegmentStorage.getExecutor());
                 }, chunkedSegmentStorage.getExecutor())
                 .exceptionally(ex -> (Void) handleException(ex));
+    }
+
+    private CompletableFuture<Void> createDelayFuture(int millis) {
+        return Futures.delayedFuture(Duration.ofMillis(millis), (ScheduledExecutorService) chunkedSegmentStorage.getExecutor());
     }
 
     private Object handleException(Throwable e) {

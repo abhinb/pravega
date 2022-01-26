@@ -167,7 +167,7 @@ public class AsyncSemaphore implements AutoCloseable {
         synchronized (this.queue) {
             Exceptions.checkNotClosed(this.closed, this);
             this.usedCredits = Math.max(0, this.usedCredits - credits);
-            log.trace("AsyncSemaphore[{}]: Release. Credits={}, TotalUsedCredits={}.", this.logId, credits, this.usedCredits);
+            log.info("AsyncSemaphore[{}]: Release. Credits={}, TotalUsedCredits={}.", this.logId, credits, this.usedCredits);
         }
 
         ArrayList<PendingTask<?>> toExecute = new ArrayList<>();

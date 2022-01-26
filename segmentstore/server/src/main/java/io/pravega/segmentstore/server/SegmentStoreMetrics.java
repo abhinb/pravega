@@ -20,6 +20,7 @@ import io.pravega.common.concurrent.ExecutorServiceHelpers;
 import io.pravega.segmentstore.server.logs.operations.CompletableOperation;
 import io.pravega.segmentstore.storage.cache.CacheState;
 import io.pravega.shared.MetricsNames;
+import io.pravega.shared.MetricsTags;
 import io.pravega.shared.metrics.Counter;
 import io.pravega.shared.metrics.DynamicLogger;
 import io.pravega.shared.metrics.Meter;
@@ -525,6 +526,10 @@ public final class SegmentStoreMetrics {
     public static void outstandingEventProcessorBytes(String processorName, int containerId, long outstandingBytes) {
         DYNAMIC_LOGGER.reportGaugeValue(MetricsNames.CONTAINER_EVENT_PROCESSOR_OUTSTANDING_BYTES, outstandingBytes,
                 eventProcessorTag(containerId, processorName));
+    }
+
+    public static void systemCriticalSegmentUnindexedBytes(String segmentName, long unindexedBytes){
+        DYNAMIC_LOGGER.reportGaugeValue(MetricsNames.SYSTEM_CRITICAL_SEGMENT_UNINDEXED_BYTES, unindexedBytes, MetricsTags.segmentTags(segmentName));
     }
 
     //endregion
