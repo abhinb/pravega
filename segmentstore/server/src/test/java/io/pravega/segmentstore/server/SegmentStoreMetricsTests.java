@@ -232,7 +232,7 @@ public class SegmentStoreMetricsTests {
         op.operationsFailed(opf);
         assertEquals(20, (int) MetricRegistryUtils.getTimer(MetricsNames.OPERATION_LATENCY, containerTag).totalTime(TimeUnit.MILLISECONDS));
         SegmentStoreMetrics.reportOperationLogSize(1000, 1);
-        AssertExtensions.assertEventuallyEquals(true, () -> MetricRegistryUtils.getGauge(MetricsNames.OPERATION_LOG_SIZE).value() == 1000, 2000);
+        AssertExtensions.assertEventuallyEquals(true, () -> MetricRegistryUtils.getGauge(MetricsNames.OPERATION_LOG_SIZE, containerTag(containerId)).value() == 1000, 2000);
         op.close();
     }
 
