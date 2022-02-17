@@ -217,7 +217,7 @@ public class SegmentStoreMetricsTests {
 
     @Test
     public void testOperationProcessorMetrics() throws Exception {
-        int containerId = 1;
+        int containerId = 9876;
         final String[] containerTag = containerTag(containerId);
         @Cleanup
         val op = new SegmentStoreMetrics.OperationProcessor(containerId);
