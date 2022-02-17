@@ -231,10 +231,8 @@ public class SegmentStoreMetricsTests {
                 new TestCompletableOperation(30));
         op.operationsFailed(opf);
         assertEquals(20, (int) MetricRegistryUtils.getTimer(MetricsNames.OPERATION_LATENCY, containerTag).totalTime(TimeUnit.MILLISECONDS));
-        //choose a containerId between 10 to MAX to avoid choosing containerid created by other tests
-        int operationLogcontainerId = new Random().nextInt(Integer.MAX_VALUE - 10 ) + 10;
-        SegmentStoreMetrics.reportOperationLogSize(1000, operationLogcontainerId);
-        AssertExtensions.assertEventuallyEquals(true, () -> MetricRegistryUtils.getGauge(MetricsNames.OPERATION_LOG_SIZE, containerTag(operationLogcontainerId)).value() == 1000, 2000);
+        SegmentStoreMetrics.reportOperationLogSize(1000, containerId);
+        AssertExtensions.assertEventuallyEquals(true, () -> MetricRegistryUtils.getGauge(MetricsNames.OPERATION_LOG_SIZE, containerTag(containerId)).value() == 1000, 4000);
         op.close();
     }
 
