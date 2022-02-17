@@ -218,7 +218,7 @@ public class SegmentStoreMetricsTests {
     @Test
     public void testOperationProcessorMetrics() throws Exception {
         // avoid choosing containers 0-4 from other tests, start random from 10 instead
-        int containerId = new Random().nextInt(Integer.MAX_VALUE - 10 ) + 10;;
+        int containerId = new Random().nextInt(Integer.MAX_VALUE - 10 ) + 10;
         final String[] containerTag = containerTag(containerId);
         @Cleanup
         val op = new SegmentStoreMetrics.OperationProcessor(containerId);
