@@ -241,7 +241,8 @@ public class SegmentStoreMetricsTests {
         op.processingDelay(delay * delay, "Batching");
         assertEquals(delay * delay, (int) MetricRegistryUtils.getGauge(MetricsNames.OPERATION_PROCESSOR_DELAY_MILLIS, throttlerTag(containerId, "Batching")).value());
         //
-        SegmentStoreMetrics.reportOperationLogSize(1000, containerId);
+        //SegmentStoreMetrics.reportOperationLogSize(1000, containerId);
+        op.reportOperationLogSize(1000, containerId);
         AssertExtensions.assertEventuallyEquals(true, () -> MetricRegistryUtils.getGauge(MetricsNames.OPERATION_LOG_SIZE, containerTag(containerId)).value() == 1000, 2000);
         op.close();
     }

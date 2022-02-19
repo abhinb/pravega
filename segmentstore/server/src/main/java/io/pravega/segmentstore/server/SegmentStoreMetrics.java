@@ -219,6 +219,7 @@ public final class SegmentStoreMetrics {
             for (String throttler : throttlers) {
                 DYNAMIC_LOGGER.freezeGaugeValue(MetricsNames.OPERATION_PROCESSOR_DELAY_MILLIS, throttlerTag(containerId, throttler));
             }
+            DYNAMIC_LOGGER.freezeGaugeValue(MetricsNames.OPERATION_LOG_SIZE, containerTag);
         }
 
         public void currentState(int queueSize, int inFlightCount) {
@@ -278,6 +279,11 @@ public final class SegmentStoreMetrics {
                 GLOBAL_OPERATION_LATENCY.reportFailValue(millis);
             }
         }
+
+        public void reportOperationLogSize(int logSize, int containerId) {
+            DYNAMIC_LOGGER.reportGaugeValue(MetricsNames.OPERATION_LOG_SIZE, logSize, containerTag(containerId));
+        }
+
     }
 
     //endregion
@@ -520,9 +526,6 @@ public final class SegmentStoreMetrics {
      * @param logSize           Size of the operationlog to be reported.
      * @param containerId       Container owning the operationlog.
      */
-    public static void reportOperationLogSize(int logSize, int containerId) {
-        DYNAMIC_LOGGER.reportGaugeValue(MetricsNames.OPERATION_LOG_SIZE, logSize, containerTag(containerId));
-    }
 
     //endregion
 }
