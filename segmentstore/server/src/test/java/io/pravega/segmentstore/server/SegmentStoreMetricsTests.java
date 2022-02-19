@@ -219,7 +219,8 @@ public class SegmentStoreMetricsTests {
     @Test
     public void testOperationProcessorMetrics() throws Exception {
         // avoid choosing containers 0-4 from other tests, start random from 10 instead
-        int containerId = new Random().nextInt(Integer.MAX_VALUE - 10 ) + 10;
+        //int containerId = new Random().nextInt(Integer.MAX_VALUE - 10 ) + 10;
+        int containerId = 1;
         final String[] containerTag = containerTag(containerId);
         @Cleanup
         val op = new SegmentStoreMetrics.OperationProcessor(containerId);
@@ -233,6 +234,13 @@ public class SegmentStoreMetricsTests {
                 new TestCompletableOperation(30));
         op.operationsFailed(opf);
         assertEquals(20, (int) MetricRegistryUtils.getTimer(MetricsNames.OPERATION_LATENCY, containerTag).totalTime(TimeUnit.MILLISECONDS));
+        //
+        int delay = 100;
+        op.processingDelay(delay, "Batching");
+        assertEquals(delay, (int) MetricRegistryUtils.getGauge(MetricsNames.OPERATION_PROCESSOR_DELAY_MILLIS, throttlerTag(containerId, "Batching")).value());
+        op.processingDelay(delay * delay, "Batching");
+        assertEquals(delay * delay, (int) MetricRegistryUtils.getGauge(MetricsNames.OPERATION_PROCESSOR_DELAY_MILLIS, throttlerTag(containerId, "Batching")).value());
+        //
         SegmentStoreMetrics.reportOperationLogSize(1000, containerId);
         AssertExtensions.assertEventuallyEquals(true, () -> MetricRegistryUtils.getGauge(MetricsNames.OPERATION_LOG_SIZE, containerTag(containerId)).value() == 1000, 2000);
         op.close();
