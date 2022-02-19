@@ -234,17 +234,11 @@ public class SegmentStoreMetricsTests {
                 new TestCompletableOperation(30));
         op.operationsFailed(opf);
         assertEquals(20, (int) MetricRegistryUtils.getTimer(MetricsNames.OPERATION_LATENCY, containerTag).totalTime(TimeUnit.MILLISECONDS));
-        //
-        int delay = 100;
-        op.processingDelay(delay, "Batching");
-        assertEquals(delay, (int) MetricRegistryUtils.getGauge(MetricsNames.OPERATION_PROCESSOR_DELAY_MILLIS, throttlerTag(containerId, "Batching")).value());
-        op.processingDelay(delay * delay, "Batching");
-        assertEquals(delay * delay, (int) MetricRegistryUtils.getGauge(MetricsNames.OPERATION_PROCESSOR_DELAY_MILLIS, throttlerTag(containerId, "Batching")).value());
-        //
         //SegmentStoreMetrics.reportOperationLogSize(1000, containerId);
         op.reportOperationLogSize(1000, containerId);
         AssertExtensions.assertEventuallyEquals(true, () -> MetricRegistryUtils.getGauge(MetricsNames.OPERATION_LOG_SIZE, containerTag(containerId)).value() == 1000, 2000);
         op.close();
+        assertNull(MetricRegistryUtils.getTimer(MetricsNames.OPERATION_LOG_SIZE, containerTag));
     }
 
     private static class TestCompletableOperation extends CompletableOperation {
