@@ -155,7 +155,7 @@ public class SegmentStoreMetricsTests {
     @Test
     public void testThrottlerMetrics() {
         final int delay = 100;
-//        final int containerId = new Random().nextInt(Integer.MAX_VALUE);
+        //final int containerId = new Random().nextInt(Integer.MAX_VALUE);
 
         final int containerId = 1;
         @Cleanup
