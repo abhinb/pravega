@@ -238,7 +238,7 @@ public class SegmentStoreMetricsTests {
         op.reportOperationLogSize(1000, containerId);
         AssertExtensions.assertEventuallyEquals(true, () -> MetricRegistryUtils.getGauge(MetricsNames.OPERATION_LOG_SIZE, containerTag(containerId)).value() == 1000, 2000);
         op.close();
-        assertNull(MetricRegistryUtils.getTimer(MetricsNames.OPERATION_LOG_SIZE, containerTag));
+        assertNull(MetricRegistryUtils.getGauge(MetricsNames.OPERATION_LOG_SIZE, containerTag));
     }
 
     private static class TestCompletableOperation extends CompletableOperation {
