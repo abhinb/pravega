@@ -196,7 +196,7 @@ class BookKeeperLog implements DurableDataLog {
                 }
             }
 
-            log.info("{}: Closed.", this.traceObjectId);
+            log.info("{}: Log has been closed.", this.traceObjectId);
         }
     }
 
