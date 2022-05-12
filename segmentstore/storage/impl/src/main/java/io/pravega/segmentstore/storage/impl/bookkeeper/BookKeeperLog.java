@@ -223,6 +223,7 @@ class BookKeeperLog implements DurableDataLog {
      */
     @Override
     public void initialize(Duration timeout) throws DurableDataLogException {
+        log.info("{}: P-2190: Intializing log ",this.traceObjectId);
         List<Long> ledgersToDelete;
         LogMetadata newMetadata;
         synchronized (this.lock) {
@@ -241,6 +242,7 @@ class BookKeeperLog implements DurableDataLog {
                 val emptyLedgerIds = Ledgers.fenceOut(oldMetadata.getLedgers(), this.bookKeeper, this.config, this.traceObjectId);
 
                 // Update Metadata to reflect those newly found empty ledgers.
+                log.info("{} P-2190: there is old metadata for this log",this.traceObjectId);
                 oldMetadata = oldMetadata.updateLedgerStatus(emptyLedgerIds);
             }
 
@@ -325,6 +327,7 @@ class BookKeeperLog implements DurableDataLog {
         // Post append tasks. We do not need to wait for these to happen before returning the call.
         result.whenCompleteAsync((address, ex) -> {
             if (ex != null) {
+                log.warn("{}: There was an error encountered while writing {} ",this.traceObjectId, ex);
                 handleWriteException(ex);
             } else {
                 // Update metrics and take care of other logging tasks.
@@ -385,6 +388,7 @@ class BookKeeperLog implements DurableDataLog {
         }
 
         if (getWriteLedger().ledger.isClosed()) {
+            log.info("{}: P2190:  Current write ledger {} is closed. Execute rollover ", this.traceObjectId, this.getWriteLedger().metadata.getLedgerId());
             // Current ledger is closed. Execute the rollover processor to safely create a new ledger. This will reinvoke
             // the write processor upon finish, so the writes can be reattempted.
             this.rolloverProcessor.runAsync();
@@ -401,12 +405,14 @@ class BookKeeperLog implements DurableDataLog {
      */
     private boolean processPendingWrites() {
         long traceId = LoggerHelpers.traceEnterWithContext(log, this.traceObjectId, "processPendingWrites");
+        log.info("{} P2190: Start processing Pending Writes ",this.traceObjectId);
 
         // Clean up the write queue of all finished writes that are complete (successfully or failed for good)
         val cleanupResult = this.writes.removeFinishedWrites();
         if (cleanupResult.getStatus() == WriteQueue.CleanupStatus.WriteFailed) {
             // We encountered a failed write. As such, we must close immediately and not process anything else.
             // Closing will automatically cancel all pending writes.
+            log.info("{}: P-2190:processPendingWrites: encountered a failed write, while checking for finished writes. calling close.", this.traceObjectId);
             close();
             LoggerHelpers.traceLeave(log, this.traceObjectId, "processPendingWrites", traceId, cleanupResult);
             return false;
@@ -417,6 +423,7 @@ class BookKeeperLog implements DurableDataLog {
 
             if (cleanupResult.getStatus() == WriteQueue.CleanupStatus.QueueEmpty) {
                 // Queue is empty - nothing else to do.
+                log.info("{}: P-2190:processPendingWrites: did not find any writes to process. return.", this.traceObjectId);
                 LoggerHelpers.traceLeave(log, this.traceObjectId, "processPendingWrites", traceId, cleanupResult);
                 return true;
             }
@@ -431,11 +438,13 @@ class BookKeeperLog implements DurableDataLog {
             success = executeWrites(toExecute);
 
             if (success) {
+                log.info("{}. Sucessfully executed writes. Check if need to rollover ",this.traceObjectId);
                 // After every run where we did write, check if need to trigger a rollover.
                 this.rolloverProcessor.runAsync();
             }
         }
 
+        log.info("{}: P2190: End processing pending writes, successfully executed writes? {} ", this.traceObjectId, success);
         LoggerHelpers.traceLeave(log, this.traceObjectId, "processPendingWrites", traceId, toExecute.size(), success);
         return success;
     }
@@ -471,14 +480,16 @@ class BookKeeperLog implements DurableDataLog {
      * will be failed as well).
      */
     private boolean executeWrites(List<Write> toExecute) {
-        log.debug("{}: Executing {} writes.", this.traceObjectId, toExecute.size());
+        log.info("{}: Executing {} writes.", this.traceObjectId, toExecute.size());
         for (int i = 0; i < toExecute.size(); i++) {
             Write w = toExecute.get(i);
             try {
                 // Record the beginning of a new attempt.
+
                 int attemptCount = w.beginAttempt();
                 if (attemptCount > this.config.getMaxWriteAttempts()) {
                     // Retried too many times.
+                    log.info("{}: P-2190: Write {}:{} had too many attempts.", this.traceObjectId, w.getWriteLedger().ledger.getId(), w.getEntryId());
                     throw new RetriesExhaustedException(w.getFailureCause());
                 }
 
@@ -491,6 +502,7 @@ class BookKeeperLog implements DurableDataLog {
             } catch (Throwable ex) {
                 // Synchronous failure (or RetriesExhausted). Fail current write.
                 boolean isFinal = !isRetryable(ex);
+                log.info("{}: P-2190: failing Write {}:{}. Is retryable?: {}",this.traceObjectId, w.getWriteLedger().ledger.getId(), w.getEntryId(), isFinal);
                 w.fail(ex, isFinal);
 
                 // And fail all remaining writes as well.
@@ -603,6 +615,7 @@ class BookKeeperLog implements DurableDataLog {
             handleWriteException(error, write, this);
         } catch (Throwable ex) {
             // Most likely a bug in our code. We still need to fail the write so we don't leave it hanging.
+            log.info("{}: P-2190: Failing write {}:{} due to exception {}", this.traceObjectId, write.getWriteLedger().ledger.getId(), write.getEntryId(), ex );
             write.fail(ex, !isRetryable(ex));
         } finally {
             // Process all the appends in the queue after any change. This finalizes the completion, does retries (if needed)
@@ -681,6 +694,7 @@ class BookKeeperLog implements DurableDataLog {
                     ex = new DurableDataLogException("General exception while accessing BookKeeper.", ex);
             }
         } finally {
+            log.info("P-2190: Failing write {}:{} due to exception {}",  write.getWriteLedger().ledger.getId(), write.getEntryId(), ex );
             write.fail(ex, !isRetryable(ex));
         }
     }
@@ -930,6 +944,7 @@ class BookKeeperLog implements DurableDataLog {
      */
     @SneakyThrows(DurableDataLogException.class) // Because this is an arg to SequentialAsyncProcessor, which wants a Runnable.
     private void rollover() {
+        log.info("{}: Begin rollover ", this.traceObjectId);
         if (this.closed.get()) {
             // BookKeeperLog is closed; no point in running this.
             return;
@@ -941,6 +956,7 @@ class BookKeeperLog implements DurableDataLog {
             // Nothing to do. Trigger the write processor just in case this rollover was invoked because the write
             // processor got a pointer to a LedgerHandle that was just closed by a previous run of the rollover processor.
             this.writeProcessor.runAsync();
+            log.info("{}: Not rolling over. Triggered writeProcessor again.", this.traceObjectId);
             LoggerHelpers.traceLeave(log, this.traceObjectId, "rollover", traceId, false);
             return;
         }
@@ -948,14 +964,14 @@ class BookKeeperLog implements DurableDataLog {
         try {
             // Create new ledger.
             WriteHandle newLedger = Ledgers.create(this.bookKeeper, this.config, this.logId);
-            log.debug("{}: Rollover: created new ledger {}.", this.traceObjectId, newLedger.getId());
+            log.info("{}: Rollover: created new ledger {}.", this.traceObjectId, newLedger.getId());
 
             // Update the metadata.
             LogMetadata metadata = getLogMetadata();
             metadata = updateMetadata(metadata, newLedger, false);
             LedgerMetadata ledgerMetadata = metadata.getLedger(newLedger.getId());
             assert ledgerMetadata != null : "cannot find newly added ledger metadata";
-            log.debug("{}: Rollover: updated metadata '{}.", this.traceObjectId, metadata);
+            log.info("{}: Rollover: updated metadata '{}.", this.traceObjectId, metadata);
 
             // Update pointers to the new ledger and metadata.
             WriteHandle oldLedger;
