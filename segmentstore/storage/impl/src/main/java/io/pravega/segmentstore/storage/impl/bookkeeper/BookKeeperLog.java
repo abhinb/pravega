@@ -388,7 +388,7 @@ class BookKeeperLog implements DurableDataLog {
         }
 
         if (getWriteLedger().ledger.isClosed()) {
-            log.info("{}: P2190:  Current write ledger {} is closed. Execute rollover ", this.traceObjectId, this.getWriteLedger().metadata.getLedgerId());
+            log.info("{}: P2190:  Current write ledger {} is closed. Execute rollover ", this.traceObjectId, this.getWriteLedger().ledger.getId());
             // Current ledger is closed. Execute the rollover processor to safely create a new ledger. This will reinvoke
             // the write processor upon finish, so the writes can be reattempted.
             this.rolloverProcessor.runAsync();
@@ -412,7 +412,7 @@ class BookKeeperLog implements DurableDataLog {
         if (cleanupResult.getStatus() == WriteQueue.CleanupStatus.WriteFailed) {
             // We encountered a failed write. As such, we must close immediately and not process anything else.
             // Closing will automatically cancel all pending writes.
-            log.info("{}: P-2190:processPendingWrites: encountered a failed write, while checking for finished writes. calling close.", this.traceObjectId);
+            log.info("{}: P-2190:processPendingWrites: encountered a failed completed write, while checking for finished writes. calling close.", this.traceObjectId);
             close();
             LoggerHelpers.traceLeave(log, this.traceObjectId, "processPendingWrites", traceId, cleanupResult);
             return false;
@@ -494,6 +494,7 @@ class BookKeeperLog implements DurableDataLog {
                 }
 
                 // Invoke the BookKeeper write.
+                log.info("{}:  P2190: Attempt {} for write with ledger {} and entry id {}",this.traceObjectId, attemptCount, w.getWriteLedger().ledger.getId(), w.getEntryId() );
                 w.getWriteLedger()
                       .ledger.appendAsync(w.getData().retain())
                              .whenComplete((Long entryId, Throwable error) -> {
@@ -545,12 +546,14 @@ class BookKeeperLog implements DurableDataLog {
             // Write likely failed because of LedgerClosedException. Need to check the LastAddConfirmed for each
             // involved Ledger and see if the write actually made it through or not.
             long lac = fetchLastAddConfirmed(w.getWriteLedger(), lastAddsConfirmed);
+            log.info("{}: P2190: LAC fetched for ledger {} is {}", this.traceObjectId, w.getWriteLedger().ledger.getId(), lac);
             if (w.getEntryId() >= 0 && w.getEntryId() <= lac) {
                 // Write was actually successful. Complete it and move on.
                 completeWrite(w);
                 anythingChanged = true;
             } else if (currentLedger.ledger.getId() != w.getWriteLedger().ledger.getId()) {
                 // Current ledger has changed; attempt to write to the new one.
+                log.info("{}: P2190: Write with entry {} had failed on ledger {}. Setting write ledger for the write to {}", this.traceObjectId, w.getEntryId(), currentLedger.ledger.getId(), w.getWriteLedger().ledger.getId());
                 w.setWriteLedger(currentLedger);
                 anythingChanged = true;
             }
@@ -606,6 +609,7 @@ class BookKeeperLog implements DurableDataLog {
                 // Successful write. If we get this, then by virtue of how the Writes are executed (always wait for writes
                 // in previous ledgers to complete before initiating, and BookKeeper guaranteeing that all writes in this
                 // ledger prior to this writes are done), it is safe to complete the callback future now.
+                log.info("{}: Completed write with ledger {} and entry {}",this.traceObjectId, write.getWriteLedger().ledger.getId(), write.getEntryId());
                 completeWrite(write);
                 return;
             }

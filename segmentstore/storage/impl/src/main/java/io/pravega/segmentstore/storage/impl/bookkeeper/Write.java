@@ -28,11 +28,13 @@ import java.util.concurrent.atomic.AtomicReference;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 
 /**
  * A single Write in the BookKeeperLog Write Queue.
  */
+@Slf4j
 class Write {
     //region Members
 
@@ -193,6 +195,7 @@ class Write {
         WriteLedger ledger = this.writeLedger.get();
         if (ledger != null && ledger.isRolledOver()) {
             // Rollovers aren't really failures (they're caused by us). In that case, do not count this failure as an attempt.
+            log.info("Failing write on ledger {} due to rollover", ledger.ledger.getId());
             this.attemptCount.updateAndGet(v -> Math.max(0, v - 1));
         }
 
