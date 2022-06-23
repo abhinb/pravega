@@ -25,6 +25,7 @@ import io.pravega.common.concurrent.AsyncSemaphore;
 import io.pravega.common.concurrent.Futures;
 import io.pravega.common.concurrent.MultiKeySequentialProcessor;
 import io.pravega.common.util.BufferView;
+import io.pravega.common.util.ByteArraySegment;
 import io.pravega.segmentstore.contracts.ReadResult;
 import io.pravega.segmentstore.contracts.SegmentProperties;
 import io.pravega.segmentstore.contracts.StreamSegmentTruncatedException;
@@ -733,7 +734,7 @@ class ContainerKeyIndex implements AutoCloseable {
                 val e = AsyncTableEntryReader.readEntryComponents(inputReader, nextOffset, serializer);
                 val hash = this.keyHasher.hash(e.getKey());
                 log.info("{}: Correctly deserialized entry {} with hash {}.", this.traceObjectId, e, hash);
-                String output = "Deserialized entry info: Key " + e.getKey() +
+                String output = "Deserialized entry info: Key " + e.getKey() + " key content " + new ByteArraySegment(e.getKey().getCopy()) +
                         ", Value " + e.getValue() + ", Version " + e.getVersion() +
                         ", KeyLength " + e.getHeader().getKeyLength() +
                         ", KeyOffset " + e.getHeader().getKeyOffset() +
