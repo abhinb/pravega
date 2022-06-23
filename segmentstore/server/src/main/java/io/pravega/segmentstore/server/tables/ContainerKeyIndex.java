@@ -633,6 +633,7 @@ class ContainerKeyIndex implements AutoCloseable {
      */
     private void triggerCacheTailIndex(DirectSegmentAccess segment, long tailCachingStartOffset, SegmentTracker.RecoveryTask task) {
         long tailIndexLength = task.triggerIndexOffset - tailCachingStartOffset;
+        log.info("{}: Tail index length {}.", this.traceObjectId, tailIndexLength);
         if (tailCachingStartOffset >= task.triggerIndexOffset) {
             // Fully caught up. Nothing else to do.
             log.debug("{}: Table Segment {} fully indexed.", this.traceObjectId, segment.getSegmentId());
@@ -693,9 +694,11 @@ class ContainerKeyIndex implements AutoCloseable {
                 this.traceObjectId, segment.getSegmentId(), startOffset, maxLength);
         val timer = new Timer();
         ReadResult rr = segment.read(startOffset, maxLength, this.config.getRecoveryTimeout());
+        log.info("{}: Issuing segment read at offset {} with max length {}.", this.traceObjectId, startOffset, maxLength);
         return AsyncReadResultProcessor
                 .processAll(rr, this.executor, this.config.getRecoveryTimeout())
                 .thenApplyAsync(inputData -> {
+                    log.info("{}: Input data length to collect table entries from {}.", this.traceObjectId, inputData.getLength());
                     // Parse out all Table Keys and collect their latest offsets, as well as whether they were deleted.
                     collectEntriesWithHighestVersion(inputData, startOffset, maxLength, updates, tailCachePreIndexVersionTracker, lastIndexedOffset);
 
@@ -724,9 +727,12 @@ class ContainerKeyIndex implements AutoCloseable {
         final long maxOffset = startOffset + maxLength;
         val inputReader = input.getBufferViewReader();
         try {
+            log.info("{}: Before loop to start collecting entries that will stop at offset {}.", this.traceObjectId, maxOffset);
             while (nextOffset < maxOffset) {
+                log.info("{}: Attempting to deserialize table entry at {}.", this.traceObjectId, nextOffset);
                 val e = AsyncTableEntryReader.readEntryComponents(inputReader, nextOffset, serializer);
                 val hash = this.keyHasher.hash(e.getKey());
+                log.info("{}: Correctly deserialized entry {} with hash {}.", this.traceObjectId, e, hash);
                 // Consider for the tail cache the new entries or the entries whose version is higher than the observed one.
                 if (!tailCachePreIndexVersionTracker.containsKey(hash) || tailCachePreIndexVersionTracker.get(hash) < e.getVersion()) {
                     tailCachePreIndexVersionTracker.put(hash, e.getVersion());
