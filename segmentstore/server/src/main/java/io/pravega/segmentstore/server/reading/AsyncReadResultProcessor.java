@@ -19,6 +19,7 @@ import com.google.common.base.Preconditions;
 import io.pravega.common.Exceptions;
 import io.pravega.common.concurrent.Futures;
 import io.pravega.common.util.BufferView;
+import io.pravega.common.util.ByteArraySegment;
 import io.pravega.segmentstore.contracts.ReadResult;
 import io.pravega.segmentstore.contracts.ReadResultEntry;
 import io.pravega.segmentstore.contracts.ReadResultEntryType;
@@ -30,6 +31,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * An Asynchronous processor for ReadResult objects. Attaches to a ReadResult and executes a callback using an Executor
@@ -177,6 +179,7 @@ public class AsyncReadResultProcessor implements AutoCloseable {
     //endregion
 
     @RequiredArgsConstructor
+    @Slf4j
     private static class ProcessAllHandler implements AsyncReadResultHandler {
         @Getter
         private final Duration requestContentTimeout;
@@ -190,7 +193,10 @@ public class AsyncReadResultProcessor implements AutoCloseable {
 
         @Override
         public boolean processEntry(ReadResultEntry entry) {
-            this.parts.add(entry.getContent().join());
+            BufferView bufferView = entry.getContent().join();
+            this.parts.add(bufferView);
+            log.info("Processing ReadResultEntry: StreamSegmentOffset {}, RequestedReadLength {}, Type {}, Data {}",
+                    entry.getStreamSegmentOffset(), entry.getRequestedReadLength(), entry.getType(), new ByteArraySegment(bufferView.getCopy()));
             return true;
         }
 
