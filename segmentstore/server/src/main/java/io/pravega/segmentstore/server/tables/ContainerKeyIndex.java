@@ -733,6 +733,10 @@ class ContainerKeyIndex implements AutoCloseable {
                 val e = AsyncTableEntryReader.readEntryComponents(inputReader, nextOffset, serializer);
                 val hash = this.keyHasher.hash(e.getKey());
                 log.info("{}: Correctly deserialized entry {} with hash {}.", this.traceObjectId, e, hash);
+                log.info("{}: Deserialized entry info: Key {}, Value {}, Version {}, KeyLength {}, KeyOffset {}, EntryVersion {}, ValueLength {}, TotalLength {}, isDeletion {}",
+                        this.traceObjectId, e.getKey(), e.getValue(), e.getVersion(), e.getHeader().getKeyLength(),
+                        e.getHeader().getKeyOffset(), e.getHeader().getEntryVersion(), e.getHeader().getValueLength(),
+                        e.getHeader().getTotalLength(), e.getHeader().isDeletion());
                 // Consider for the tail cache the new entries or the entries whose version is higher than the observed one.
                 if (!tailCachePreIndexVersionTracker.containsKey(hash) || tailCachePreIndexVersionTracker.get(hash) < e.getVersion()) {
                     tailCachePreIndexVersionTracker.put(hash, e.getVersion());
