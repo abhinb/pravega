@@ -24,6 +24,8 @@ import io.pravega.segmentstore.contracts.SegmentProperties;
 import io.pravega.segmentstore.contracts.StreamSegmentInformation;
 import io.pravega.segmentstore.storage.ReadOnlyStorage;
 import io.pravega.segmentstore.storage.SegmentHandle;
+import lombok.extern.slf4j.Slf4j;
+
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
@@ -32,6 +34,7 @@ import java.util.function.Consumer;
 /**
  * Helps read Segment data directly from Storage.
  */
+@Slf4j
 public final class StreamSegmentStorageReader {
     /**
      * Reads a range of bytes from a Segment in Storage.
@@ -143,6 +146,7 @@ public final class StreamSegmentStorageReader {
         }
 
         private BufferView toReadResultEntry(byte[] readBuffer, int size) {
+            log.info("[StreamSegmentStorageReader]: Bytes read from storage are {} for the segment {}", readBuffer, this.segmentInfo.getName());
             return new ByteArraySegment(readBuffer, 0, size);
         }
 

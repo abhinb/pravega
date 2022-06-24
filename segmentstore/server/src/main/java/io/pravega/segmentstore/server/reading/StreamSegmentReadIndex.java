@@ -395,7 +395,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
         long endOffset = offset + data.getLength();
         Exceptions.checkArgument(endOffset <= length, "offset", "The given range of bytes (%d-%d) is beyond the StreamSegment Length (%d).", offset, endOffset, length);
 
-        log.debug("{}: Append (Offset = {}, Length = {}).", this.traceObjectId, offset, data.getLength());
+        log.info("{}: Append (Offset = {}, Length = {}, Data = {}, Segment = {}).", this.traceObjectId, offset, data.getLength(), data.getCopy(), this.metadata.getName());
         Preconditions.checkArgument(this.lastAppendedOffset.get() < 0 || offset == this.lastAppendedOffset.get() + 1,
                 "The given range of bytes (Offset=%s) does not start right after the last appended offset (%s).", offset, this.lastAppendedOffset);
 
@@ -406,6 +406,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
             if (lastEntry != null
                     && lastEntry.isDataEntry()
                     && lastEntry.getLastStreamSegmentOffset() == this.lastAppendedOffset.get()) {
+                log.info("{}: Appending data to the existing entry {} for offset {}", this.traceObjectId, lastEntry.getCacheAddress(), lastEntry.getLastStreamSegmentOffset());
                 appendLength = appendToEntry(data, (CacheIndexEntry) lastEntry);
             }
         }
@@ -415,6 +416,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
             // Add the remainder of the buffer as a new entry (with the offset updated).
             data = data.slice(appendLength, data.getLength() - appendLength);
             offset += appendLength;
+            log.info("{}: Adding data to cache as a new entry at offset {}",this.traceObjectId, offset);
             ReadIndexEntry lastEntry = addToCacheAndIndex(data, offset, this::appendSingleEntryToCacheAndIndex);
             this.lastAppendedOffset.set(lastEntry.getLastStreamSegmentOffset());
         } else {
@@ -544,7 +546,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
             return;
         }
 
-        log.debug("{}: Insert (Offset = {}, Length = {}).", this.traceObjectId, offset, data.getLength());
+        log.info("{}: Insert (Offset = {}, Length = {}, Data = {}, Segment = {} ).", this.traceObjectId, offset, data.getLength(), data.array(), this.metadata.getName());
 
         // There is a very small chance we might be adding data twice, if we get two concurrent requests that slipped past
         // the StorageReadManager. Fixing it would be complicated, so let's see if it poses any problems.
@@ -552,6 +554,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
                 "The given range of bytes (Offset=%s, Length=%s) does not correspond to the StreamSegment range that is in Storage (%s).",
                 offset, data.getLength(), this.metadata.getStorageLength());
         try {
+            log.info("{}: Adding data to cache and index at offset {} for segment {}",this.traceObjectId, offset, this.metadata.getName());
             addToCacheAndIndex(data, offset, this::insertEntriesToCacheAndIndex);
         } catch (CacheFullException ex) {
             // We have already ack-ed this request with the appropriate data to the upstream code, so it's not a problem
@@ -585,6 +588,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
         }
 
         // Add append data to the Data Store.
+        log.info("{}: In AppendToEntry: Adding data {} to entry {}", this.traceObjectId, data.getCopy(), entry.getCacheAddress());
         appendLength = this.cacheStorage.append(entry.getCacheAddress(), (int) entry.getLength(), data);
         entry.increaseLength(appendLength);
         entry.setGeneration(this.summary.touchOne(entry.getGeneration()));
@@ -618,6 +622,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
      */
     private CacheIndexEntry appendSingleEntryToCacheAndIndex(BufferView data, long segmentOffset) {
         int dataAddress = this.cacheStorage.insert(data);
+        log.info("{}: appendSingleEntryToCacheAndIndex: Data = {} at offset {} for segment {}", this.traceObjectId, data.getCopy(), segmentOffset, this.metadata.getName());
         CacheIndexEntry newEntry;
         try {
             newEntry = new CacheIndexEntry(segmentOffset, data.getLength(), dataAddress);
@@ -668,6 +673,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
                     CacheIndexEntry newEntry;
                     int dataAddress = CacheStorage.NO_ADDRESS; // Null address pointer.
                     try {
+                        log.info("{}: In insertEntriesToCacheAndIndex, adding data {} to cache at addresss {} for segment {} at offset {}", this.traceObjectId, dataToInsert.getCopy(), dataAddress, this.metadata.getName(), segmentOffset);
                         dataAddress = this.cacheStorage.insert(dataToInsert);
                         newEntry = new CacheIndexEntry(segmentOffset, dataToInsert.getLength(), dataAddress);
                         ReadIndexEntry overriddenEntry = addToIndex(newEntry);
@@ -850,7 +856,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
                     // This cache entry refers to a merged segment (into this one). As per the contract, we shouldn't return it.
                     return null;
                 }
-
+                log.info("{}: ReadDirect, reading entry from cache at address {} for segment {} ", this.traceObjectId, indexEntry.getCacheAddress(), this.metadata.getName());
                 entryData = this.cacheStorage.get(indexEntry.getCacheAddress());
             }
 
@@ -864,8 +870,9 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
             contents.add(entryData.slice(0, entryReadLength));
             readLength += entryReadLength;
         }
-
-        return BufferView.wrap(contents);
+        BufferView buff = BufferView.wrap(contents);
+        log.info("{}: ReadDirect: have read bytes {} for segment {} at offset {}",this.traceObjectId, buff.getCopy(), this.metadata.getName(), startOffset);
+        return buff;
     }
 
     /**
@@ -890,7 +897,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
         Exceptions.checkArgument(checkReadAvailability(startOffset, true) != ReadAvailability.BeyondLastOffset,
                 "startOffset", "StreamSegment is sealed and startOffset is beyond the last offset of the StreamSegment.");
 
-        log.debug("{}: Read (Offset = {}, MaxLength = {}).", this.traceObjectId, startOffset, maxLength);
+        log.info("{}: Read (Offset = {}, MaxLength = {}, Segment= {}).", this.traceObjectId, startOffset, maxLength, this.metadata.getName());
         return new StreamSegmentReadResult(startOffset, maxLength, this::getMultiReadResultEntry, this.traceObjectId);
     }
 
@@ -938,6 +945,8 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
     @VisibleForTesting
     CompletableReadResultEntry getSingleReadResultEntry(long resultStartOffset, int maxLength, boolean makeCopy) {
         Exceptions.checkNotClosed(this.closed, this);
+
+        log.info("{}: In getSingleReadResultEntry, with startOffset, maxLength", this.traceObjectId, resultStartOffset, maxLength);
 
         if (maxLength < 0) {
             // Nothing to read.
@@ -1009,6 +1018,8 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
     private CompletableReadResultEntry getMultiReadResultEntry(long resultStartOffset, int maxLength, boolean makeCopy) {
         int readLength = 0;
 
+        log.info("{}: In getMultiReadResultEntry with startOffset: {}, maxLength: {} Segment = {}", this.traceObjectId, resultStartOffset, maxLength, this.metadata.getName());
+
         CompletableReadResultEntry nextEntry = getSingleReadResultEntry(resultStartOffset, maxLength, makeCopy);
         if (nextEntry == null || !(nextEntry instanceof CacheReadResultEntry)) {
             // We can only coalesce CacheReadResultEntries.
@@ -1025,12 +1036,14 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
             if (readLength >= this.config.getMemoryReadMinLength() || readLength >= maxLength) {
                 break;
             }
-
+            log.info("{}: MultiReadResultEntry: Retrieving the next entry from cache at offset {}", this.traceObjectId, resultStartOffset + readLength);
             nextEntry = getSingleMemoryReadResultEntry(resultStartOffset + readLength, maxLength - readLength, makeCopy);
         } while (nextEntry != null);
 
         // Coalesce the results into a single InputStream and return the result.
-        return new CacheReadResultEntry(resultStartOffset, BufferView.wrap(contents));
+        BufferView buff = BufferView.wrap(contents);
+        log.info("{}: buffer returned from multireadresultentry for segment {} is {}",this.traceObjectId, this.metadata.getName(), buff.getCopy());
+        return new CacheReadResultEntry(resultStartOffset, buff);
     }
 
     /**
@@ -1202,6 +1215,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
 
         int length = (int) Math.min(maxLength, entry.getLength() - entryOffset);
         assert length > 0 : String.format("length{%d} <= 0. streamSegmentOffset = %d, maxLength = %d, entry.offset = %d, entry.length = %d", length, streamSegmentOffset, maxLength, entry.getStreamSegmentOffset(), entry.getLength());
+        log.info("{}: CreateMemoryRead: Reading entry from cache at address {} for segment {}",this.traceObjectId, entry.getCacheAddress(), this.metadata.getName());
         BufferView data = this.cacheStorage.get(entry.getCacheAddress());
         assert data != null : String.format("No Cache Entry could be retrieved for entry %s", entry);
 
@@ -1214,6 +1228,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
         if (makeCopy) {
             data = new ByteArraySegment(data.getCopy());
         }
+        log.info("{}: Entry read from memory for segment {} is {}",this.traceObjectId, this.metadata.getName(), data.getCopy());
         return new CacheReadResultEntry(entry.getStreamSegmentOffset() + entryOffset, data);
     }
 

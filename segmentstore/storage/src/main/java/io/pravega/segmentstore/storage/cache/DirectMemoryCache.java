@@ -36,6 +36,7 @@ import java.util.function.Supplier;
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
 import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 
 /**
@@ -90,6 +91,7 @@ import lombok.val;
  * -- Use {@link #getState()} to get insights into memory usage.
  */
 @ThreadSafe
+@Slf4j
 public class DirectMemoryCache implements CacheStorage {
     //region Members
 
@@ -253,6 +255,7 @@ public class DirectMemoryCache implements CacheStorage {
         }
 
         this.metrics.insert(data.getLength());
+        log.info("DirectMemoryCache: Inserted data {} in the cache at address {}", data.getCopy(), lastBlockAddress);
         return lastBlockAddress;
     }
 
@@ -288,7 +291,7 @@ public class DirectMemoryCache implements CacheStorage {
         int bufferId = this.layout.getBufferId(address);
         int blockId = this.layout.getBlockId(address);
         appendedBytes = this.buffers[bufferId].tryAppend(blockId, expectedLastBlockLength, data);
-
+        log.info("DirectMemoryCache: Append data {} at address {}", data.getCopy(), address );
         this.storedBytes.addAndGet(appendedBytes);
         this.metrics.append(appendedBytes);
         return appendedBytes;
@@ -350,7 +353,9 @@ public class DirectMemoryCache implements CacheStorage {
             ByteBuf result = readBuffers.size() == 1 ? first :
                     new CompositeByteBuf(first.alloc(), false, readBuffers.size(), Lists.reverse(readBuffers));
             this.metrics.get(result.readableBytes());
-            return new NonReleaseableByteBufWrapper(result);
+            NonReleaseableByteBufWrapper wrapped_buffer = new NonReleaseableByteBufWrapper(result);
+            log.info("[DirectMemoryCache]: Data retrieved from cache at address {} is {}",address, wrapped_buffer.getCopy());
+            return wrapped_buffer;
         }
     }
 
