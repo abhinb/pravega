@@ -30,11 +30,13 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * A block-based, direct memory buffer used by {@link DirectMemoryCache}.
  */
 @ThreadSafe
+@Slf4j
 class DirectMemoryBuffer implements AutoCloseable {
     //region Members
 
@@ -140,14 +142,18 @@ class DirectMemoryBuffer implements AutoCloseable {
      * If all the data has been written, then {@link WriteResult#getWrittenLength()} ()} will equal data.getLength().
      */
     synchronized WriteResult write(BufferView data, int predecessorAddress) {
+        log.info("[DirectMemoryBuffer]:Writing data at addresss {}",predecessorAddress);
         if (this.usedBlockCount >= this.layout.blocksPerBuffer()) {
             // Full
+            log.info("[DirectMemoryBuffer]: No capacity to write data at address {}",predecessorAddress);
             return null;
         }
 
         ByteBuf metadataBuf = getMetadataBlock();
         long blockMetadata = metadataBuf.getLong(0);
+        log.info("[DirectMemoryBuffer]: write: blockMetadata address {}",blockMetadata);
         int blockId = this.layout.getNextFreeBlockId(blockMetadata);
+        log.info("[DirectMemoryBuffer]: write: block Id is {} for blockMetdata {}", blockId, blockMetadata);
         assert blockId != CacheLayout.NO_BLOCK_ID;
         final int firstBlockId = blockId;
         int dataOffset = 0;
@@ -160,12 +166,14 @@ class DirectMemoryBuffer implements AutoCloseable {
 
                 // Copy the data to the block.
                 int blockLength = Math.min(data.getLength() - dataOffset, this.layout.blockSize());
+                log.info("[DirectMemoryBuffer]: write: block size to be copied is {}", blockLength);
                 if (blockLength > 0) {
                     data.slice(dataOffset, blockLength).copyTo(getWriteableBlock(blockId, 0));
                     dataOffset += blockLength;
                 }
 
                 // Update block metadata.
+                log.info("[DirectMemoryBuffer]: write: updating metadata block with blocklength {} at address {}", blockLength, predecessorAddress);
                 long metadata = this.layout.newBlockMetadata(CacheLayout.NO_BLOCK_ID, blockLength, predecessorAddress);
                 metadataBuf.setLong(bufIndex, metadata);
                 this.usedBlockCount++;
@@ -173,6 +181,7 @@ class DirectMemoryBuffer implements AutoCloseable {
                 // Move on to the next block to write.
                 predecessorAddress = this.layout.calculateAddress(this.id, blockId);
                 blockId = this.layout.getNextFreeBlockId(blockMetadata);
+                log.info("[DirectMemoryBuffer]: write: next block to write at  is {} in blockID {}",predecessorAddress,blockId);
             } while (blockId != CacheLayout.NO_BLOCK_ID && dataOffset < data.getLength());
         } catch (Throwable ex) {
             if (!Exceptions.mustRethrow(ex)) {
@@ -186,6 +195,7 @@ class DirectMemoryBuffer implements AutoCloseable {
 
         // Update the root metadata.
         blockMetadata = metadataBuf.getLong(0);
+        log.info("[DirectMemoryBuffer]:  write: Setting next free block id as {}",blockId);
         blockMetadata = this.layout.setNextFreeBlockId(blockMetadata, blockId);
         metadataBuf.setLong(0, blockMetadata);
 
@@ -250,11 +260,15 @@ class DirectMemoryBuffer implements AutoCloseable {
      */
     synchronized int read(int blockId, List<ByteBuf> readBuffers) {
         validateBlockId(blockId, true);
+        log.info("[DirectMemoryBuffer]: Entered read method with blockId {}", blockId);
         ByteBuf metadataBuf = getMetadataBlock();
         while (blockId != CacheLayout.NO_BLOCK_ID) {
             int bufIndex = blockId * this.layout.blockMetadataSize();
+            log.info("[DirectMemoryBuffer]: Buffer Index is {} for blockId {}", bufIndex, blockId);
             long blockMetadata = metadataBuf.getLong(bufIndex);
+            log.info("[DirectMemoryBuffer]: BlockMetadata address is {} for bufferIndex {}",blockMetadata, bufIndex);
             if (this.layout.isUsedBlock(blockMetadata)) {
+                log.info("[DirectMemoryBuffer]: blockMetadata {} is a used block", blockMetadata);
                 int blockLength = this.layout.getLength(blockMetadata);
                 if (!readBuffers.isEmpty() && blockLength < this.layout.blockSize()) {
                     throw new CacheCorruptedException(String.format("Buffer %s, Block %s: Non-full, non-terminal block (length=%s).",
@@ -262,22 +276,25 @@ class DirectMemoryBuffer implements AutoCloseable {
                 }
 
                 int predecessorAddress = this.layout.getPredecessorAddress(blockMetadata);
+                log.info("[DirectMemoryBuffer]: Predecessor Address {} for blockMetadata {}",predecessorAddress, blockMetadata);
                 readBuffers.add(getReadOnlyDataBlock(blockId, Math.min(blockLength, this.layout.blockSize())));
                 if (predecessorAddress == CacheLayout.NO_ADDRESS || this.layout.getBufferId(predecessorAddress) != this.id) {
                     // We are done.
+                    log.info("[DirectMemoryBuffer]: Exit read method with predecessor address {}",predecessorAddress);
                     return predecessorAddress;
                 } else {
                     blockId = this.layout.getBlockId(predecessorAddress);
                     assert blockId >= 1 && blockId < this.layout.blocksPerBuffer();
                 }
             } else if (readBuffers.isEmpty()) {
+                log.info("[DirectMemoryBuffer]: Exit read method with empty buffer and predecessor address {} ",CacheLayout.NO_ADDRESS);
                 return CacheLayout.NO_ADDRESS;
             } else {
                 // Found a bad pointer.
                 throw new CacheCorruptedException(String.format("Buffer %s, Block %s: Unallocated.", this.id, blockId));
             }
         }
-
+        log.info("[DirectMemoryBuffer]: Exit read method with predecessor address {} ",CacheLayout.NO_ADDRESS);
         return CacheLayout.NO_ADDRESS;
     }
 
@@ -411,6 +428,7 @@ class DirectMemoryBuffer implements AutoCloseable {
     @GuardedBy("this")
     private ByteBuf getReadOnlyDataBlock(int blockIndex, int blockLength) {
         assert blockLength <= this.layout.blockSize();
+        log.info("[DirectMemoryBuffer]: get read block at blockIndex {} with length {}", blockIndex, blockLength);
         return getBuf().slice(blockIndex * this.layout.blockSize(), blockLength).asReadOnly();
     }
 

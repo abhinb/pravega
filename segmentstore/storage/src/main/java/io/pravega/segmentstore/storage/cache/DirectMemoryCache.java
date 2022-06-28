@@ -217,12 +217,14 @@ public class DirectMemoryCache implements CacheStorage {
 
     @Override
     public int insert(BufferView data) {
+        log.info("[DirectMemoryCache]: insert called");
         Exceptions.checkNotClosed(this.closed.get(), this);
         Preconditions.checkArgument(data.getLength() <= CacheLayout.MAX_ENTRY_SIZE,
                 "Entry too long. Expected max %s, given %s.", CacheLayout.MAX_ENTRY_SIZE, data.getLength());
 
         int lastBlockAddress = CacheLayout.NO_ADDRESS;
         int remainingLength = data.getLength();
+        log.info("[DirectMemoryCache]: inserting data with length {}",remainingLength);
         try {
             // As long as we still have data to copy, we try to reuse an existing, non-full buffer or allocate a new one,
             // and write the remaining data to it.
@@ -232,6 +234,7 @@ public class DirectMemoryCache implements CacheStorage {
 
                 // Write the data to the buffer.
                 BufferView slice = data.slice(data.getLength() - remainingLength, remainingLength);
+                log.info("[DirectMemoryCache]: Writing data at blockAdress {}",lastBlockAddress);
                 DirectMemoryBuffer.WriteResult writeResult = buffer.write(slice, lastBlockAddress);
                 if (writeResult == null) {
                     // Someone else grabbed this buffer and wrote to it before we got a chance. Go back and find another one.
@@ -332,20 +335,25 @@ public class DirectMemoryCache implements CacheStorage {
     @Override
     public BufferView get(int address) {
         Exceptions.checkNotClosed(this.closed.get(), this);
+        log.info("[DirectMemoryCache]: Etner method get with address {}",address);
         List<ByteBuf> readBuffers = new ArrayList<>();
 
         while (address != CacheLayout.NO_ADDRESS) {
             // Locate the Buffer-Block for the current address.
             int bufferId = this.layout.getBufferId(address);
+            log.info("[DirectMemoryCache]: bufferid {} retrieved for address {}",bufferId, address);
             int blockId = this.layout.getBlockId(address);
+            log.info("[DirectMemoryCache]: blockId {} retrieved for address {}", blockId, address);
             DirectMemoryBuffer b = this.buffers[bufferId];
 
             // Fetch the read data into our buffer collection and then set the address to the next in the chain.
             address = b.read(blockId, readBuffers);
+            log.info("[DirectMemoryCache]: Finished reading at blockId {}. Will now read at {}", blockId, address);
         }
 
         if (readBuffers.isEmpty()) {
             // Couldn't read anything, so this address must not point to anything.
+            log.info("[DirectMemoryCache]: Exit with Empty read buffers");
             return null;
         } else {
             // Compose the result and return it.

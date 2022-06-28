@@ -946,7 +946,7 @@ class StreamSegmentReadIndex implements CacheManager.Client, AutoCloseable {
     CompletableReadResultEntry getSingleReadResultEntry(long resultStartOffset, int maxLength, boolean makeCopy) {
         Exceptions.checkNotClosed(this.closed, this);
 
-        log.info("{}: In getSingleReadResultEntry, with startOffset, maxLength", this.traceObjectId, resultStartOffset, maxLength);
+        log.info("{}: In getSingleReadResultEntry, with startOffset {}, maxLength {}", this.traceObjectId, resultStartOffset, maxLength);
 
         if (maxLength < 0) {
             // Nothing to read.
