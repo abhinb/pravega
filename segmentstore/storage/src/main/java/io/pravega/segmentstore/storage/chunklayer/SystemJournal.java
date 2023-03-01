@@ -409,9 +409,7 @@ public class SystemJournal {
                 .thenComposeAsync(v -> writeRecordBatch(records), executor));
     }
 
-    public CompletableFuture<List<ChunkHandle>> listSystemSnapshots() {
-        return executeSerialized( () -> this.chunkStorage.listSystemSnapshots());
-    }
+   
 
     /**
      * Writes a single batch of {@link SystemJournalRecord}
