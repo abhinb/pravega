@@ -19,6 +19,7 @@ import com.google.common.annotations.VisibleForTesting;
 import io.pravega.common.TimeoutTimer;
 import io.pravega.common.concurrent.Futures;
 import io.pravega.common.util.RetriesExhaustedException;
+import io.pravega.common.util.Retry;
 import io.pravega.segmentstore.server.OperationLog;
 import io.pravega.segmentstore.server.Writer;
 import java.time.Duration;
@@ -26,6 +27,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -87,10 +90,14 @@ class LogFlusher {
         // 3. Repeat 1+2 until StorageWriter claims there is nothing more to flush.
         val flushAgain = new AtomicBoolean(true);
         val attemptNo = new AtomicInteger(0);
+        AtomicLong delay = new AtomicLong(0);
         return Futures.loop(
                 () -> flushAgain.get() && attemptNo.getAndIncrement() < MAX_FLUSH_ATTEMPTS,
-                () -> flushOnce(attemptNo.get(), timer),
-                flushAgain::set,
+                () -> Futures.delayedFuture( () -> flushOnce(attemptNo.get(), timer) , delay.get(), executor),
+                (flushed) -> {
+                    flushAgain.set(flushed);
+                    delay.set(delay.get() + 2);
+                    },
                 this.executor)
                 .thenRun(() -> {
                     if (flushAgain.get()) {

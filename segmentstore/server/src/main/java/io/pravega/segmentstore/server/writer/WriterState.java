@@ -28,11 +28,13 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.concurrent.GuardedBy;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 
 /**
  * Holds the current state for the StorageWriter.
  */
+@Slf4j
 class WriterState {
     //region Members
 
@@ -145,8 +147,10 @@ class WriterState {
      * Indicates the fact that the {@link StorageWriter} has completed reading.
      */
     void recordReadComplete() {
+        log.info("KARMAN-4593: recordReadComplete");
         val ffc = this.forceFlushContext.get();
         if (ffc != null) {
+            log.info("KARMAN-4593: recordReadComplete setting lastreadseqnum", this.lastReadSequenceNumber.get());
             ffc.setLastReadSequenceNumber(this.lastReadSequenceNumber.get());
         }
     }
@@ -157,9 +161,11 @@ class WriterState {
      * @param result The {@link WriterFlushResult} summarizing the flush stage.
      */
     void recordFlushComplete(WriterFlushResult result) {
+        log.info("KARMAN-4593: inside recordFlushComplete");
         val ffc = this.forceFlushContext.get();
         if (ffc != null && ffc.flushComplete(result)) {
             this.forceFlushContext.set(null);
+            log.info("KARMAN-4593: inside recordFlushComplete, completing ffc with %s", ffc.isAnythingFlushed());
             ffc.getCompletion().complete(ffc.isAnythingFlushed());
         }
     }
@@ -172,11 +178,14 @@ class WriterState {
      * given Sequence Number have been flushed.
      */
     CompletableFuture<Boolean> setForceFlush(long upToSequenceNumber) {
+        log.info("KARMAN-4593: setForceFlush to %s", upToSequenceNumber);
         if (upToSequenceNumber <= getLastTruncatedSequenceNumber()) {
+            log.info("KARMAN-4593: setForceFlush: seqno %s already acked as the LTSN is %s", upToSequenceNumber, getLastReadSequenceNumber());
             // The desired seq no has already been acknowledged.
             return CompletableFuture.completedFuture(false);
         }
 
+        log.info("KARMAN-4593: setForceFlush: setting force flush upto seq no %s", upToSequenceNumber);
         val context = new ForceFlushContext(upToSequenceNumber);
         Preconditions.checkState(this.forceFlushContext.compareAndSet(null, context), "Another force-flush is in progress.");
         return context.getCompletion();
@@ -259,6 +268,7 @@ class WriterState {
          * @return True if a Force Flush has been completed as a result (irrespective of outcome), false otherwise.
          */
         synchronized boolean flushComplete(WriterFlushResult result) {
+            log.info("KARMAN-4593: inside isflushComplate with lastReadSeqNo %s and uptoseqnum %s, anythingflushed %s", this.lastReadSequenceNumber, this.upToSequenceNumber, this.anythingFlushed );
             if (this.lastReadSequenceNumber != Operation.NO_SEQUENCE_NUMBER && result.isAnythingFlushed()) {
                 this.anythingFlushed = true;
             }

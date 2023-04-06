@@ -457,6 +457,7 @@ public class RecoverFromStorageCommand extends DataRecoveryCommand {
                 .name(segmentInfo.getProperties().getName())
                 .attributes(segmentInfo.getProperties().getAttributes())
                 .build();
+        output("stoage metadata length %s and attributes %s", segmentInformation.getLength(), segmentInformation.getAttributes());
         return MetadataStore.SegmentInfo.builder()
                 .properties(segmentInformation)
                 .segmentId(segmentInfo.getSegmentId())
@@ -507,7 +508,7 @@ public class RecoverFromStorageCommand extends DataRecoveryCommand {
         // 2. Recovering EVENT_PROCESSOR_SEGMENT leads to length mismatch issues between container and storage
         //    metadata as EVENT_PROCESSOR_SEGMENTS are created by default when container starts and then as part
         //    of recovery, when container comes up we update the lenghts in the metadata.
-        if (segmentName.contains(RG_SCALE_GROUP) || segmentName.contains(EVENT_PROCESSEOR_SEGMENT)) {
+        if (segmentName.contains(RG_SCALE_GROUP) || segmentName.contains(EVENT_PROCESSEOR_SEGMENT) || segmentName.contains("commitStreamReaders")) {
             return false;
         }
         return true;
