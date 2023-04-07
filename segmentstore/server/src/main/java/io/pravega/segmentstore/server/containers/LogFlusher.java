@@ -96,7 +96,7 @@ class LogFlusher {
                 () -> Futures.delayedFuture( () -> flushOnce(attemptNo.get(), timer) , delay.get(), executor),
                 (flushed) -> {
                     flushAgain.set(flushed);
-                    delay.set(delay.get() + 2);
+                    delay.set(delay.get() + 2000);
                     },
                 this.executor)
                 .thenRun(() -> {
