@@ -69,9 +69,12 @@ import io.pravega.storage.filesystem.FileSystemStorageConfig;
 import lombok.Cleanup;
 import lombok.Getter;
 import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
 import lombok.val;
+import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.commons.lang.math.NumberUtils;
 
+import java.io.EOFException;
 import java.io.File;
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
@@ -97,6 +100,7 @@ import java.util.stream.Collectors;
  * and its usage can be found at:
  * <a href="https://github.com/pravega/pravega/blob/master/documentation/src/docs/recovery-procedures/lts-recovery-steps.md"/>
  */
+@Slf4j
 public class RecoverFromStorageCommand extends DataRecoveryCommand {
     private static final Duration TIMEOUT = Duration.ofMillis(300 * 1000);
     private static final String ATTRIBUTE_SUFFIX = "$attributes.index";
@@ -125,7 +129,9 @@ public class RecoverFromStorageCommand extends DataRecoveryCommand {
     private final int containerCount;
     private final StorageFactory storageFactory;
     private final String tier2Root = getCommandArgs().getState().getConfigBuilder().build().getConfig(FileSystemStorageConfig::builder).getRoot();
+    private final TableExtensionConfig TABLE_EXTENSION_CONFIG = getCommandArgs().getState().getConfigBuilder().build().getConfig(TableExtensionConfig::builder);
     private final String containersPath = File.separator + "_system" + File.separator + "containers";
+    private final HashSet<String> deletedSegments = new HashSet<>();
 
     /**
      * Creates an instance of RecoverFromStorageCommand class.
@@ -507,9 +513,31 @@ public class RecoverFromStorageCommand extends DataRecoveryCommand {
             if (!allowSegment(segment)) {
                 continue;
             }
+//            if(segment.contains("longevity/mediumScaleTxBytes/17")) {
+//                output("transaction segment %s with storage metadata ", segment);
+//                log.info("RecoverFromStorage: transaction segment {} with storage metadata ", segment);
+//                StorageMetadata storageMetadata = null;
+//                try {
+//                    storageMetadata = SLTS_SERIALIZER.deserialize(unversionedEntry.getValue().getCopy()).getValue();
+//                }catch(Exception e) {
+//                    output("segment %s threw exception ", segment);
+//                    continue;
+//                }
+//                if(storageMetadata instanceof SegmentMetadata) {
+//                    SegmentMetadata segmentMetadata = (SegmentMetadata) storageMetadata;
+//                    output("storage segment metadata %s..isActivve  %s", segmentMetadata, segmentMetadata.isActive());
+//                    log.info("RecoverFromStorage: storage segment metadata {}..isActivve  {}", segmentMetadata, segmentMetadata.isActive());
+//                }
+//                if(storageMetadata instanceof ChunkMetadata){
+//                    ChunkMetadata chunkMetadata = (ChunkMetadata) storageMetadata;
+//                    output("storage chunk metadata %s..isActivve  %s", chunkMetadata, chunkMetadata.isActive());
+//                    log.info("RecoverFromStorage: storage chunk metadata {}..isActivve  {}", chunkMetadata, chunkMetadata.isActive());
+//                }
+//            }
             if (operation instanceof TableSegmentUtils.PutOperation) {
                 tableExtension.put(tableSegment, Collections.singletonList(unversionedEntry), TIMEOUT).join();
             } else {
+                deletedSegments.add(segment); //track deleted segments/chunks and skip querying them during validation.
                 tableExtension.remove(tableSegment, Collections.singletonList(unversionedEntry.getKey()), TIMEOUT);
             }
         }
@@ -596,8 +624,15 @@ public class RecoverFromStorageCommand extends DataRecoveryCommand {
             ContainerTableExtension extension = this.container.getExtension(ContainerTableExtension.class);
             boolean isValid = true;
             try {
+                if(deletedSegments.contains(segment)) {
+//                    output("deleted:  %s",segment);
+                    return true;
+                }
                 List<TableEntry> entries = extension.get(NameUtils.getStorageMetadataSegmentName(this.container.getId()), Collections.singletonList(BufferView.wrap(segment.getBytes(StandardCharsets.UTF_8))), TIMEOUT).get();
                 TableEntry entry = entries.get(0);
+                if( entry == null ) {
+                    output("no entry for segment/chunk %s found in storage metadata ", segment);
+                }
                 StorageMetadata storageMetadata = SLTS_SERIALIZER.deserialize(entry.getValue().getCopy()).getValue();
                 if (storageMetadata instanceof ChunkMetadata) {
                     ChunkMetadata chunkMetdata = (ChunkMetadata) storageMetadata;
@@ -614,7 +649,7 @@ public class RecoverFromStorageCommand extends DataRecoveryCommand {
                     }
                 }
             } catch (Exception e) {
-                output("There was exception fetching entry from " + NameUtils.getStorageMetadataSegmentName(this.container.getId()) + " exception " + e);
+                output("There was exception fetching entry %s from %s . Exception %s", segment, NameUtils.getStorageMetadataSegmentName(this.container.getId()), ExceptionUtils.getStackTrace(e));
                 isValid = false;
             }
             return isValid;
@@ -644,7 +679,7 @@ public class RecoverFromStorageCommand extends DataRecoveryCommand {
         }
 
         private ContainerTableExtension createTableExtension(SegmentContainer c, ScheduledExecutorService e) {
-            return new ContainerTableExtensionImpl(TableExtensionConfig.builder().build(), c, this.cacheManager, e);
+            return new ContainerTableExtensionImpl(TABLE_EXTENSION_CONFIG, c, this.cacheManager, e);
         }
 
         @Override
