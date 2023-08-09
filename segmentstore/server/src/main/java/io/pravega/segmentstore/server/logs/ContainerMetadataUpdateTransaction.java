@@ -846,6 +846,7 @@ class ContainerMetadataUpdateTransaction implements ContainerMetadata {
         }
 
         private boolean canUnregister(SegmentMetadata existingMetadata) {
+            log.info("MetadataUpdate[{}]: Checking unregistration for segment {}", existingMetadata.getContainerId(), existingMetadata);
             return existingMetadata.isDeleted()
                     || existingMetadata.getStorageLength() >= existingMetadata.getLength();
         }

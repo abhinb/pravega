@@ -32,11 +32,13 @@ import java.util.stream.Collectors;
 import javax.annotation.concurrent.NotThreadSafe;
 import lombok.Builder;
 import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 
 /**
  * Metadata for a Ledger-based log.
  */
+@Slf4j
 @NotThreadSafe
 class LogMetadata implements ReadOnlyBookkeeperLogMetadata {
     //region Members
@@ -299,17 +301,21 @@ class LogMetadata implements ReadOnlyBookkeeperLogMetadata {
         LedgerAddress result = null;
         LedgerMetadata firstLedger = this.ledgers.get(0);
         if (address.getLedgerSequence() < firstLedger.getSequence()) {
+            log.info("LogMetadata: Passed address {} with ledgerSequence {} before the first ledger in list", address, address.getLedgerSequence());
             // Most likely an old address. The result is the first address of the first ledger we have.
             result = new LedgerAddress(firstLedger, 0);
         } else if (address.getEntryId() < lastEntryId) {
             // Same ledger, next entry.
+            log.info("LogMetadata: Passed address {} falling in the same ledger", address);
             result = new LedgerAddress(address.getLedgerSequence(), address.getLedgerId(), address.getEntryId() + 1);
         } else {
             // Next ledger. First try a binary search, hoping the ledger in the address actually exists.
+            log.info("LogMetadata: Finding the ledger for the passed address {}", address);
             LedgerMetadata ledgerMetadata = null;
             int index = getLedgerMetadataIndex(address.getLedgerId()) + 1;
             if (index > 0) {
                 // Ledger is in the list. Make sure it's not the last one.
+                log.info("LogMetadata: Passed ledger {} index is {} our of {}", address, index, this.ledgers.size());
                 if (index < this.ledgers.size()) {
                     ledgerMetadata = this.ledgers.get(index);
                 }
@@ -317,6 +323,7 @@ class LogMetadata implements ReadOnlyBookkeeperLogMetadata {
                 // Ledger was not in the list. We need to find the first ledger with an id larger than the one we have.
                 for (LedgerMetadata lm : this.ledgers) {
                     if (lm.getLedgerId() > address.getLedgerId()) {
+                        log.info("LogMetadata: Found ledger {} . Passed ledger {}", lm, address);
                         ledgerMetadata = lm;
                         break;
                     }
@@ -328,6 +335,7 @@ class LogMetadata implements ReadOnlyBookkeeperLogMetadata {
             }
         }
 
+        log.info("LogMetadata: Computed ledger {} . Truncation address {}", result, this.truncationAddress);
         if (result != null && result.compareTo(this.truncationAddress) < 0) {
             result = this.truncationAddress;
         }

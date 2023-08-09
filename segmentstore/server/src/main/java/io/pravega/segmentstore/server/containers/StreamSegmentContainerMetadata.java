@@ -25,6 +25,8 @@ import io.pravega.segmentstore.server.UpdateableContainerMetadata;
 import io.pravega.segmentstore.server.UpdateableSegmentMetadata;
 import io.pravega.segmentstore.server.logs.operations.Operation;
 import io.pravega.segmentstore.storage.LogAddress;
+
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -34,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
@@ -263,7 +266,7 @@ public class StreamSegmentContainerMetadata implements UpdateableContainerMetada
         }
 
         if (evictedSegments.size() > 0) {
-            log.info("{}: EvictedStreamSegments Count = {}, Active = {}", this.traceObjectId, evictedSegments.size(), count);
+            log.info("{}: EvictedStreamSegments Count = {}, Active = {}, Segments = {}", this.traceObjectId, evictedSegments.size(), count, evictedSegments);
             this.metrics.segmentCount(count);
         }
 

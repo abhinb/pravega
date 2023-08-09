@@ -304,6 +304,18 @@ class StorageWriter extends AbstractThreadPoolService implements Writer {
 
     private CompletableFuture<Void> processSegmentOperation(SegmentOperation op) {
         // Add the operation to the appropriate Aggregator.
+        val segmentMetdata = this.dataSource.getStreamSegmentMetadata(op.getStreamSegmentId());
+        if( segmentMetdata == null ) {
+            // we have seen instances where we get segmentMetadata as null at the storagewriter level here which ideally
+            // shouldnt happen.
+            // SegmentMetadata being null here after it has been through the OperationProcessor basically
+            // means the segment metadata is removed from the containerMetadata( StorageWriters' WriterDataSource.metadata).
+            // Segment metadata being removed can (only) happen if the metadata has been evicted in MetadataCheckpoints after this `op` was processed.
+            // Segment evicted means the effects of metadata have already been recorded through StorageWriter for thie op.
+            // Yet if we still land here due to some bug, just ignore these operations instead of failing the pipeline later with DataCorruption.
+            log.info("{}: No segment metadata found. Ignoring this operation {}", this.traceObjectId, op);
+            return CompletableFuture.completedFuture(null);
+        }
         return getProcessor(op.getStreamSegmentId())
                 .thenAccept(aggregator -> {
                     try {
