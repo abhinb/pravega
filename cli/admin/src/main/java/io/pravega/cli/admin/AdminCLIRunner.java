@@ -85,6 +85,10 @@ public final class AdminCLIRunner {
         val initialConfigCmd = new ConfigListCommand(new CommandArgs(Collections.emptyList(), state));
         initialConfigCmd.execute();
 
+        // Include env vars. These contain some important internal system properties that
+        // can be useful for some decision making.
+        state.getConfigBuilder().include(System.getProperties());
+
         if (args == null || args.length == 0) {
             interactiveMode(state);
         } else {

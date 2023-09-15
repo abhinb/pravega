@@ -16,6 +16,7 @@
 package io.pravega.cli.admin.utils;
 
 import io.pravega.cli.admin.AdminCommandState;
+import io.pravega.segmentstore.server.store.ServiceBuilderConfig;
 import io.pravega.segmentstore.server.store.ServiceConfig;
 
 import java.io.FileInputStream;

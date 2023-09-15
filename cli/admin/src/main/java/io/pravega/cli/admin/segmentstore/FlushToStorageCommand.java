@@ -16,6 +16,9 @@
 package io.pravega.cli.admin.segmentstore;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.net.InetAddresses;
+import io.pravega.cli.admin.AdminCommandState;
 import io.pravega.cli.admin.CommandArgs;
 import io.pravega.cli.admin.utils.AdminSegmentHelper;
 import io.pravega.cli.admin.utils.ZKHelper;
@@ -24,6 +27,7 @@ import io.pravega.common.concurrent.Futures;
 import io.pravega.shared.protocol.netty.PravegaNodeUri;
 import io.pravega.shared.protocol.netty.WireCommands;
 import lombok.Cleanup;
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.math.NumberUtils;
 import org.apache.curator.framework.CuratorFramework;
 
@@ -45,6 +49,10 @@ public class FlushToStorageCommand extends ContainerCommand {
     private static final int REQUEST_TIMEOUT_SECONDS = 60 * 30;
     private static final String ALL_CONTAINERS = "all";
 
+    private static final String ADMIN_PORT_ENV_SEARCH_PROPERTY = "SERVICE_PORT_CLI";
+
+    private static final Map<Integer, Integer> hostIndexToAdminPort = ImmutableMap.<Integer,Integer>builder().build();
+
     /**
      * Creates new instance of the FlushToStorageCommand.
      *
@@ -52,10 +60,12 @@ public class FlushToStorageCommand extends ContainerCommand {
      */
     public FlushToStorageCommand(CommandArgs args) {
         super(args);
+        buildHostIndexToAdminPortMapping(args.getState());
     }
 
     @Override
     public void execute() throws Exception {
+        output("starting executiong FTS");
         validateArguments();
         final String containerId = getArg(0);
         int startContainerId;
@@ -71,7 +81,6 @@ public class FlushToStorageCommand extends ContainerCommand {
             startContainerId = parseInt(containerId);
             endContainerId = getArgCount() == 2 ? parseInt(getArg(1)) : startContainerId;
         }
-
         List<CompletableFuture<WireCommands.StorageFlushed>> completableFutures = new ArrayList<>();
         for (int id = startContainerId; id <= endContainerId; id++) {
             completableFutures.add(flushContainerToStorage(adminSegmentHelper, id));
@@ -80,13 +89,41 @@ public class FlushToStorageCommand extends ContainerCommand {
         output("Flushed all the given segment container to storage.");
     }
 
+    private void buildHostIndexToAdminPortMapping(AdminCommandState state) {
+        output("build hostindex to admin port mapping");
+        state.getConfigBuilder().build().forEach( (k ,v) -> {
+            if(k.toString().contains(ADMIN_PORT_ENV_SEARCH_PROPERTY)) {
+                String[] adminPortParts = k.toString().split(ADMIN_PORT_ENV_SEARCH_PROPERTY);
+                String hostIndex = adminPortParts[0].split("_")[adminPortParts.length-1];
+                output("build port mapping with hostIndex %d for port %d", Integer.parseInt(hostIndex), Integer.parseInt(v.toString()));
+                hostIndexToAdminPort.put(Integer.parseInt(hostIndex), Integer.parseInt(v.toString()));
+            }
+        });
+    }
+
     private CompletableFuture<WireCommands.StorageFlushed> flushContainerToStorage(AdminSegmentHelper adminSegmentHelper, int containerId) throws Exception {
+        output("Retrieving host for container id %d",containerId);
+        String ssHost = this.getHostByContainer(containerId);
+        output("SS host retrieved from Zookeeper is %s", ssHost);
         CompletableFuture<WireCommands.StorageFlushed> reply = adminSegmentHelper.flushToStorage(containerId,
-                new PravegaNodeUri(this.getHostByContainer(containerId), getServiceConfig().getAdminGatewayPort()), super.authHelper.retrieveMasterToken());
+                new PravegaNodeUri( ssHost, getAdminPortForHost(ssHost)), super.authHelper.retrieveMasterToken());
         return reply.thenApply(result -> {
             output("Flushed the Segment Container with containerId %d to Storage.", containerId);
             return result;
         });
+    }
+
+    private int getAdminPortForHost(String ssHost) {
+        // Host registered as a IP.Just return the default port.
+        if (InetAddresses.isInetAddress(ssHost)) {
+            output("host is a ip address %s",ssHost);
+            return getServiceConfig().getAdminGatewayPort();
+        }
+        String[] ssHostParts = ssHost.split("-");
+        String ssHostIndex = ssHostParts[ssHostParts.length-1];
+        output("SSHost index is %d", ssHostIndex);
+        Preconditions.checkState(ssHostParts.length > 1 && !ssHostIndex.isEmpty() && StringUtils.isNumeric(ssHostIndex), "Unexpected host-name retrieved");
+        return hostIndexToAdminPort.getOrDefault(Integer.parseInt(ssHostIndex), getServiceConfig().getAdminGatewayPort());
     }
 
     public static CommandDescriptor descriptor() {
