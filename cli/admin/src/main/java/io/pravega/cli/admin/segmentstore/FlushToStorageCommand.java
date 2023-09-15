@@ -27,6 +27,7 @@ import io.pravega.common.concurrent.Futures;
 import io.pravega.shared.protocol.netty.PravegaNodeUri;
 import io.pravega.shared.protocol.netty.WireCommands;
 import lombok.Cleanup;
+import lombok.val;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.math.NumberUtils;
 import org.apache.curator.framework.CuratorFramework;
@@ -119,11 +120,19 @@ public class FlushToStorageCommand extends ContainerCommand {
             output("host is a ip address %s",ssHost);
             return getServiceConfig().getAdminGatewayPort();
         }
-        String[] ssHostParts = ssHost.split("-");
-        String ssHostIndex = ssHostParts[ssHostParts.length-1];
-        output("SSHost index is %d", ssHostIndex);
+        val ssHostName = extractHostName(ssHost);
+        output("HostName is %s",ssHostName);
+        val ssHostParts = ssHostName.split("-");
+        val ssHostIndex = ssHostParts[ssHostParts.length-1];
+        output("SSHost index is %s", ssHostIndex);
         Preconditions.checkState(ssHostParts.length > 1 && !ssHostIndex.isEmpty() && StringUtils.isNumeric(ssHostIndex), "Unexpected host-name retrieved");
         return hostIndexToAdminPort.getOrDefault(Integer.parseInt(ssHostIndex), getServiceConfig().getAdminGatewayPort());
+    }
+
+    static String extractHostName(String host) {
+       String[] parts = host.split("\\.");
+       Preconditions.checkState(parts.length >= 1);
+       return parts[0];
     }
 
     public static CommandDescriptor descriptor() {
